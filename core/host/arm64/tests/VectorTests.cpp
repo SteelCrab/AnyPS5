@@ -197,8 +197,53 @@ void testScalarVectorTransfer() {
     require(memory.memory.TryRead(0x3000, std::as_writable_bytes(std::span(&result, 1))) && result == 0x55667788, "Scalar vector transfer accessed past its memory operand");
     Fixture mmx({0x0f, 0x6f, 0xc1});
     rejects([&] { mmx.Run(); }, "MMX");
-    Fixture scalarFloat({0xf3, 0x0f, 0x10, 0xc1});
+    Fixture scalarFloat({0xf3, 0x0f, 0x58, 0xc1});
     rejects([&] { scalarFloat.Run(); }, "mandatory prefix");
+}
+
+void testScalarVectorMoves() {
+    for (const bool load : {true, false}) {
+        Fixture quad({static_cast<std::uint8_t>(load ? 0xf3 : 0x66), 0x45, 0x0f, static_cast<std::uint8_t>(load ? 0x7e : 0xd6), 0xc1, 0xc3});
+        quad.state.xmm[8].fill(std::byte{0x5a});
+        quad.state.xmm[9].fill(std::byte{0xe3});
+        Vector expected{};
+        std::copy_n(quad.state.xmm[load ? 9 : 8].begin(), 8, expected.begin());
+        quad.Run();
+        require(quad.state.xmm[load ? 8 : 9] == expected, "XMM MOVQ did not clear the upper 64 bits");
+    }
+    for (const auto prefix : {std::uint8_t{0xf3}, std::uint8_t{0xf2}}) {
+        const unsigned width = prefix == 0xf3 ? 32 : 64;
+        for (const auto opcode : {std::uint8_t{0x10}, std::uint8_t{0x11}}) {
+            Fixture fixture({prefix, 0x45, 0x0f, opcode, 0xc1, 0xc3});
+            fixture.state.xmm[8].fill(std::byte{0x12});
+            fixture.state.xmm[9].fill(std::byte{0xf7});
+            auto expected = fixture.state.xmm[opcode == 0x10 ? 8 : 9];
+            const auto source = fixture.state.xmm[opcode == 0x10 ? 9 : 8];
+            std::copy_n(source.begin(), width / 8, expected.begin());
+            fixture.Run();
+            require(fixture.state.xmm[opcode == 0x10 ? 8 : 9] == expected, "Register MOVSS/MOVSD overwrote preserved upper lanes");
+            require(fixture.state.xmm[opcode == 0x10 ? 9 : 8] == source && fixture.state.rflags == 0xed7, "Register MOVSS/MOVSD changed its source or flags");
+        }
+        Fixture memory({prefix, 0x0f, 0x10, 0x03, prefix, 0x0f, 0x11, 0x06, 0xc3});
+        const std::uint64_t bits = 0x7ff0000081234567;
+        memory.memory.Map(0x2001, width / 8, Read, std::as_bytes(std::span(&bits, 1)).first(width / 8));
+        memory.memory.Map(0x3003, width / 8, Read | Write);
+        memory.state.registers[3] = 0x2001;
+        memory.state.registers[6] = 0x3003;
+        memory.state.xmm[0].fill(std::byte{0xff});
+        memory.Run();
+        Vector expected{};
+        putLane(expected, 0, width, bits);
+        require(memory.state.xmm[0] == expected, "Memory MOVSS/MOVSD did not clear upper lanes or preserve NaN bits");
+        std::uint64_t output = 0;
+        require(memory.memory.TryRead(0x3003, std::as_writable_bytes(std::span(&output, 1)).first(width / 8)) && output == lane(expected, 0, width), "Scalar vector move accessed beyond its memory width");
+        Fixture fault({prefix, 0x0f, 0x10, 0x03, 0xc3});
+        fault.state.registers[3] = 0x2000;
+        fault.state.xmm[0].fill(std::byte{0x41});
+        const auto original = fault.state.xmm[0];
+        rejects([&] { fault.Run(); }, "read fault");
+        require(fault.state.xmm[0] == original && fault.state.rip == 0x1000, "Faulting MOVSS/MOVSD modified guest state");
+    }
 }
 
 }
@@ -209,6 +254,7 @@ int main() {
         testShuffleAndExtendedRegisters();
         testVectorMemory();
         testScalarVectorTransfer();
+        testScalarVectorMoves();
         std::puts("ARM64 NEON execution of SSE/SSE2 packed integers, bitwise operations, shuffles and vector memory passed");
         return 0;
     } catch (const std::exception& error) {

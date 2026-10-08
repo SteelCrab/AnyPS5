@@ -6,8 +6,10 @@
 namespace AnyPS5::Arm64 {
 
 bool Instruction::TerminatesBlock() const {
-    return operation == Operation::Jump || operation == Operation::ConditionalJump ||
-           operation == Operation::Call || operation == Operation::Return;
+    if (operation == Operation::Jump || operation == Operation::ConditionalJump ||
+        operation == Operation::Call || operation == Operation::Return || operation == Operation::Push) return true;
+    return destination.kind == OperandKind::Memory && operation != Operation::Compare &&
+           operation != Operation::Test && operation != Operation::Lea;
 }
 
 namespace {
@@ -257,17 +259,24 @@ Instruction Decode(std::span<const std::uint8_t> code, std::uint64_t address) {
         result.source = immediate(address + length + static_cast<std::uint64_t>(reader.Signed(1)));
     } else if (opcode == 0x0f) {
         const auto extension = reader.Byte();
-        if (prefix.repeat != 0 && !(prefix.repeat == 0xf3 && !prefix.word && (extension == 0x6f || extension == 0x7f))) {
+        const bool scalarMove = (prefix.repeat == 0xf3 || prefix.repeat == 0xf2) && !prefix.word && (extension == 0x10 || extension == 0x11);
+        const bool vectorQuadMove = (prefix.repeat == 0xf3 && !prefix.word && extension == 0x7e) || (prefix.word && prefix.repeat == 0 && extension == 0xd6);
+        if (prefix.repeat != 0 && !scalarMove && !vectorQuadMove && !(prefix.repeat == 0xf3 && !prefix.word && (extension == 0x6f || extension == 0x7f))) {
             throw std::runtime_error("SSE mandatory prefix or REP instruction is not implemented");
         }
-        if (extension == 0x10 || extension == 0x11 || extension == 0x28 || extension == 0x29 || extension == 0x6f || extension == 0x7f) {
+        if (vectorQuadMove) {
+            result.width = 64;
+            modOperands(64, 128);
+            if (extension == 0x7e) std::swap(result.destination, result.source);
+            result.operation = Operation::VectorMoveLowZero;
+        } else if (extension == 0x10 || extension == 0x11 || extension == 0x28 || extension == 0x29 || extension == 0x6f || extension == 0x7f) {
             if ((extension == 0x6f || extension == 0x7f) && !prefix.word && prefix.repeat == 0) {
                 throw std::runtime_error("MMX instruction translation is not implemented");
             }
-            result.width = 128;
-            modOperands();
+            result.width = scalarMove ? (prefix.repeat == 0xf2 ? 64 : 32) : 128;
+            modOperands(result.width, 128);
             if (extension == 0x10 || extension == 0x28 || extension == 0x6f) std::swap(result.destination, result.source);
-            result.operation = Operation::VectorMove;
+            result.operation = scalarMove ? Operation::VectorMoveScalar : Operation::VectorMove;
             result.aligned = extension == 0x28 || extension == 0x29 || ((extension == 0x6f || extension == 0x7f) && prefix.word);
         } else if (extension >= 0x54 && extension <= 0x57) {
             static constexpr Operation operations[]{Operation::VectorAnd, Operation::VectorAndNot, Operation::VectorOr, Operation::VectorXor};

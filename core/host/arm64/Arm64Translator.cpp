@@ -220,7 +220,7 @@ public:
         word(opcode | (static_cast<std::uint32_t>(offset / (width / 8)) << 10) | (19 << 5) | destination);
     }
     void Store(std::uint8_t source, std::size_t offset, std::uint8_t width = 64) {
-        const auto opcode = width == 64 ? 0xf9000000u : width == 16 ? 0x79000000u : 0x39000000u;
+        const auto opcode = width == 64 ? 0xf9000000u : width == 32 ? 0xb9000000u : width == 16 ? 0x79000000u : 0x39000000u;
         word(opcode | (static_cast<std::uint32_t>(offset / (width / 8)) << 10) | (19 << 5) | source);
     }
     void Binary(std::uint32_t opcode, std::uint8_t destination, std::uint8_t left, std::uint8_t right, std::uint8_t width = 64, std::uint8_t shift = 0) {
@@ -511,6 +511,20 @@ public:
             LoadVector(18, offsetof(CpuState, vectorScratch));
             WriteVector(instruction.destination, 18, next, instruction.aligned);
             break;
+        case Operation::VectorMoveScalar:
+        case Operation::VectorMoveLowZero: {
+            const auto& source = instruction.source;
+            const auto& destination = instruction.destination;
+            if (source.kind == OperandKind::Memory) Read(source, 20, instruction.width, next);
+            else Load(20, offsetof(CpuState, xmm) + source.reg * 16, instruction.width);
+            if (destination.kind == OperandKind::Memory) Write(destination, 20, instruction.width, next);
+            else if (source.kind == OperandKind::Memory || instruction.operation == Operation::VectorMoveLowZero) {
+                word(0x4f00e412u);
+                word((instruction.width == 64 ? 0x4e081c00u : 0x4e041c00u) | (20 << 5) | 18);
+                StoreVector(18, offsetof(CpuState, xmm) + destination.reg * 16);
+            } else Store(20, offsetof(CpuState, xmm) + destination.reg * 16, instruction.width);
+            break;
+        }
         case Operation::VectorAnd:
         case Operation::VectorAndNot:
         case Operation::VectorOr:

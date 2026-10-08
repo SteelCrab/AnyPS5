@@ -19,10 +19,14 @@ struct CpuState {
     alignas(16) std::array<std::array<std::byte, 16>, 2> vectorScratch{};
 };
 
+class Cpu;
+
 struct HostCall {
     std::array<std::uint64_t, 6> arguments;
     std::uint64_t stackArguments;
     GuestMemory& memory;
+    CpuState& state;
+    Cpu& cpu;
 };
 
 using HostFunction = std::uint64_t (*)(const HostCall& call, void* context);
@@ -33,7 +37,7 @@ public:
     ~Cpu();
     Cpu(const Cpu&) = delete;
     Cpu& operator=(const Cpu&) = delete;
-    void Run(CpuState& state, std::uint64_t instructionBudget = 1000000);
+    std::uint64_t Run(CpuState& state, std::uint64_t instructionBudget = 1000000);
     void Bind(std::uint64_t guestAddress, HostFunction function, void* context = nullptr);
     [[nodiscard]] std::size_t CompiledBlocks() const;
 private:

@@ -207,7 +207,7 @@ void testMemoryFaults() {
     require(memory.TryRead(0x1000, std::as_writable_bytes(std::span(&output, 1))) && output == 0, "Faulting cross-region write partially changed memory");
     require(!memory.TryRead(~std::uint64_t{0} - 1, std::as_writable_bytes(std::span(&output, 1))), "Overflowing guest range was accepted");
     rejects([&] { memory.Map(0x1002, 8, Read); }, "overlap");
-    rejects([&] { memory.Map(0x3000, 4, Write | Execute); }, "Writable executable");
+    memory.Map(0x3000, 4, Write | Execute);
 }
 
 void testNativeCallBridge() {
@@ -241,6 +241,32 @@ void testNativeCallBridge() {
     });
     changedCpu.Run(changedReturn.state);
     require(changedReturn.state.registers[0] == 77 && changedReturn.state.registers[4] == initialStack, "Native callback ignored a guest return-address write");
+}
+
+void testMutableCode() {
+    GuestMemory memory;
+    const std::array<std::uint8_t, 13> code{0xc6, 0x05, 1, 0, 0, 0, 42, 0xb8, 1, 0, 0, 0, 0xc3};
+    memory.Map(0x1000, code.size(), Read | Write | Execute, std::as_bytes(std::span(code)));
+    memory.Map(0x8000, 0x1000, Read | Write);
+    Cpu cpu(memory);
+    CpuState state;
+    state.rip = 0x1000;
+    state.registers[4] = 0x8ff8;
+    cpu.Run(state);
+    require(state.registers[0] == 42, "Guest code write executed stale instructions from the same block");
+    const auto version = memory.CodeVersion();
+    const std::byte identical{42};
+    require(memory.TryWrite(0x1008, std::span(&identical, 1)) && memory.CodeVersion() == version, "Identical code write invalidated native translations");
+    const std::byte changed{77};
+    require(memory.TryWrite(0x1008, std::span(&changed, 1)) && memory.CodeVersion() != version, "Code change did not invalidate native translations");
+    state.rip = 0x1007;
+    state.registers[4] = 0x8ff8;
+    cpu.Run(state);
+    require(state.registers[0] == 77, "Guest code write reused a stale block between runs");
+    const auto beforeFault = memory.CodeVersion();
+    const std::array<std::byte, 2> crossing{std::byte{0x90}, std::byte{0x90}};
+    require(!memory.TryWrite(0x100c, crossing) && memory.CodeVersion() == beforeFault, "Faulting code write changed the code version");
+    require(memory.Fetch(0x100c, 1) == std::vector<std::uint8_t>{0xc3}, "Faulting code write partially modified an instruction");
 }
 
 void field(std::vector<std::byte>& image, std::size_t offset, std::uint64_t value, std::size_t size) {
@@ -281,8 +307,8 @@ void testElfLoader() {
     require(state.registers[0] == 42 && state.rip == 0, "Loaded x86 ELF did not execute through ARM64 translation");
     std::array<std::byte, 16> zeros{};
     require(image.memory.TryRead(0x4006, zeros) && std::all_of(zeros.begin(), zeros.end(), [](auto value) { return value == std::byte{}; }), "ELF BSS was not zero initialized");
-    field(source, 64, 2, 4);
-    rejects([&] { static_cast<void>(LoadElf(source)); }, "Dynamic imports");
+    field(source, 64, 3, 4);
+    rejects([&] { static_cast<void>(LoadElf(source)); }, "interpreter");
     source = elf();
     field(source, 104, 1, 8);
     rejects([&] { static_cast<void>(LoadElf(source)); }, "load segment");
@@ -301,6 +327,7 @@ int main(int argc, char** argv) {
         testCallsAndMemory();
         testMemoryFaults();
         testNativeCallBridge();
+        testMutableCode();
         testElfLoader();
         if (argc == 2) {
             const auto image = elf();

@@ -24,12 +24,12 @@ class RunnerTests(unittest.TestCase):
             invalid_budget = subprocess.run([str(RUNNER), str(source), "0"], capture_output=True, text=True, timeout=30)
             self.assertEqual(invalid_budget.returncode, 2)
             self.assertIn("positive integer", invalid_budget.stderr)
-            dynamic = bytearray(original)
-            struct.pack_into("<I", dynamic, 64, 2)
-            source.write_bytes(dynamic)
+            interpreter = bytearray(original)
+            struct.pack_into("<I", interpreter, 64, 3)
+            source.write_bytes(interpreter)
             unsupported = subprocess.run([str(RUNNER), str(source)], capture_output=True, text=True, timeout=30)
             self.assertEqual(unsupported.returncode, 2)
-            self.assertIn("Dynamic imports", unsupported.stderr)
+            self.assertIn("interpreter", unsupported.stderr)
 
 
 if __name__ == "__main__":

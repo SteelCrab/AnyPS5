@@ -11,7 +11,7 @@ enum class Operation : std::uint8_t {
     ShiftLeft, ShiftRight, ShiftArithmetic, RotateLeft, RotateRight,
     Multiply, MultiplyImmediate, MultiplyUnsignedWide, MultiplySignedWide, DivideUnsigned, DivideSigned,
     ConditionalMove, SetCondition,
-    VectorMove, VectorAnd, VectorAndNot, VectorOr, VectorXor, VectorAdd, VectorSubtract,
+    VectorMove, VectorMoveScalar, VectorMoveLowZero, VectorAnd, VectorAndNot, VectorOr, VectorXor, VectorAdd, VectorSubtract,
     VectorEqual, VectorGreater, VectorMultiply, VectorShuffle, MoveToVector, MoveFromVector,
     Push, Pop, Jump, ConditionalJump, Call, Return, Nop
 };

@@ -56,6 +56,7 @@ struct Cpu::Impl {
     };
     GuestMemory& memory;
     std::unordered_map<std::uint64_t, Block> blocks;
+    std::uint64_t codeVersion = 0;
     struct Binding {
         HostFunction function;
         void* context;
@@ -73,10 +74,15 @@ void Cpu::Bind(std::uint64_t guestAddress, HostFunction function, void* context)
     if (!impl->functions.emplace(guestAddress, Impl::Binding{function, context}).second) throw std::runtime_error("Native guest function binding is duplicated");
 }
 
-void Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
+std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
+    const auto initialBudget = instructionBudget;
     state.memory = &impl->memory;
     state.fault = 0;
     while (state.rip != 0) {
+        if (impl->codeVersion != impl->memory.CodeVersion()) {
+            impl->blocks.clear();
+            impl->codeVersion = impl->memory.CodeVersion();
+        }
         if (instructionBudget == 0) throw std::runtime_error("ARM64 guest instruction budget exceeded");
         const auto function = impl->functions.find(state.rip);
         if (function != impl->functions.end()) {
@@ -86,7 +92,7 @@ void Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
                 throw std::runtime_error("Native guest function return address is outside readable guest memory");
             }
             const HostCall call{{state.registers[7], state.registers[6], state.registers[2], state.registers[1], state.registers[8], state.registers[9]},
-                                state.registers[4] + 8, impl->memory};
+                                state.registers[4] + 8, impl->memory, state, *this};
             const auto result = function->second.function(call, function->second.context);
             if (!impl->memory.TryRead(state.registers[4], std::as_writable_bytes(std::span(&next, 1)))) {
                 throw std::runtime_error("Native guest function return address became unreadable");
@@ -120,6 +126,7 @@ void Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
             throw std::runtime_error(message);
         }
     }
+    return initialBudget - instructionBudget;
 }
 
 std::size_t Cpu::CompiledBlocks() const { return impl->blocks.size(); }

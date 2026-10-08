@@ -106,17 +106,20 @@ it does not produce a Mach-O game executable.
 Linux and Windows compatibility results do not establish macOS compatibility.
 On macOS, `--autorun` fails before conversion or output creation.
 
-An experimental ARM64 CPU runner accepts a static ELF64 x86-64 image with a callable entry
-function. It maps load segments and a private guest stack, translates basic blocks to ARM64,
-and executes them in the native process. A return to the zero sentinel ends execution and
-prints RAX. It does not provide Linux process startup, syscalls, game imports, or a PS5 runtime.
+An experimental ARM64 CPU runner accepts static or dynamic ELF64 x86-64 images with a callable
+entry function. It maps load segments and a private stack, applies supported relocations,
+resolves available native imports, and executes translated ARM64 blocks in the native process.
+It runs initialization functions before the entry and finalization functions after a normal
+return. A return to the zero sentinel prints RAX. Linux/PS5 process startup, payload arguments,
+syscalls and most game system imports remain unavailable.
 
 ```sh
 build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf
 build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf 100000
 ```
 
-The optional positive instruction budget defaults to 1000000. Common register, immediate and
+The optional positive instruction budget defaults to 1000000 and includes initialization,
+the entry, finalization and native callback dispatch. Common register, immediate and
 ModRM forms are supported in the current CPU subset:
 8/16/32/64-bit MOV, register XCHG, ADD, ADC, SUB, SBB, AND, OR, XOR, CMP, TEST, INC, DEC,
 NEG, NOT, SHL, SHR, SAR, ROL and ROR; MOVSX/MOVZX/MOVSXD, accumulator sign extension,
@@ -126,16 +129,30 @@ signed displacements, RIP/EIP-relative addressing, 32-bit address truncation and
 FS/GS bases. Divide by zero and quotient overflow stop before register writeback.
 
 The SSE/SSE2 subset uses ARM64 NEON: MOVUPS/MOVUPD/MOVAPS/MOVAPD, MOVDQA/MOVDQU,
-scalar-register MOVD/MOVQ transfers, packed bitwise operations, PADDB/W/D/Q, PSUBB/W/D/Q,
+MOVSS/MOVSD, XMM MOVQ, scalar-register MOVD/MOVQ transfers, packed bitwise operations, PADDB/W/D/Q, PSUBB/W/D/Q,
 PCMPEQB/W/D, PCMPGTB/W/D, PMULLW and PSHUFD. All 16 XMM registers are available.
-Aligned vector memory forms require 16-byte alignment. Floating-point arithmetic, scalar
-floating-point moves, MMX and AVX remain unsupported.
+Aligned vector memory forms require 16-byte alignment. Floating-point arithmetic, MMX and
+AVX remain unsupported.
 
-Unsupported instructions report the guest
-address and stop. Dynamic imports, an ELF interpreter, TLS, and writable executable guest
-segments fail before execution. The integer callback API provides six SysV integer arguments,
-guest stack arguments, a checked guest-memory interface, and an integer return. It is not a
-complete system-library ABI.
+Unsupported instructions report the guest address and stop. The loader supports ET_EXEC and
+ET_DYN, load bias, RELA relative/absolute/PC32 relocations, GLOB_DAT and JUMP_SLOT imports,
+DT_NEEDED names, and initialization/finalization arrays. Missing native imports are listed
+before execution. Interpreters, TLS, REL/RELR, versioned imports, IFUNC/COPY relocations and
+proprietary SCE executable types fail explicitly. Writable guest code is permitted; writes
+invalidate native translations and memory stores end their current block.
+
+The callback API supplies six SysV integer arguments, stack arguments, checked guest memory
+and CpuState/XMM access. The native libc bridge implements heap/memory/string functions,
+character classification, integer and float/double parsing, basic stdio, and common printf
+formats. x86-64 va_list is decoded independently of the ARM64 host ABI. Positional and
+extended floating-point formats are unsupported. This remains a partial system-library ABI.
+
+Six VideoOut exports connect guest framebuffers to a native AppKit/Metal window. This path
+accepts the main output with null open parameters, linear uncompressed BGRA8, option zero,
+matching buffer-group dimensions and VSYNC mode 1. It supports registration, rate control,
+flip and close. Missing flip-event, kernel/direct-memory, input/audio and other system
+bindings still prevent the supplied homebrew games from starting. Component tests verify
+the displayed drawable; they do not establish game compatibility.
 
 CPU runner exit codes are `0` for a completed guest return, `1` for usage, and `2` for loading,
 translation, memory, callback or budget failure. The printed guest return value is separate

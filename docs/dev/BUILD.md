@@ -47,14 +47,17 @@ The native CPU runner and Metal backend are macOS-only targets.
 macOS cannot select `ON`: the runtime uses x86-64 guest code and Linux/Windows loader APIs.
 
 macOS targets ARM64 only. An x86-64 or universal target is rejected. The Metal backend links
-Apple's Metal and Foundation frameworks. SPIRV-Cross is built from its pinned submodule and
+Apple's Metal, Foundation, AppKit and QuartzCore frameworks. SPIRV-Cross is built from its pinned submodule and
 only generates MSL source; there is no Vulkan loader or MoltenVK in this backend.
 
 `metal_shader` tests translation and resource reflection without a GPU. `metal_gpu` requires
 an Apple Silicon GPU and checks compute results, shared-buffer synchronization, texture upload,
 image writes, nearest/linear filtering, texture addressing, vertex/fragment resource binding,
 rendered pixels, and error handling.
-A missing GPU fails this test. On a machine without GPU access,
+`metal_presenter` checks an actual native window and its Metal drawable, including RGBA/BGRA,
+padded rows, orientation, scaling, thread constraints and window closure. Window tests also
+require a macOS desktop session. Missing GPU/window access fails the affected tests.
+On a machine without GPU access,
 `ctest --test-dir build-macos -LE gpu` explicitly excludes it. CI excludes GPU tests;
 hardware validation must run separately on an Apple Silicon Mac.
 
@@ -63,19 +66,28 @@ requests and validates the generated MSL with the native Metal compiler.
 
 The CPU runner uses Apple Silicon JIT memory and executes translated ARM64 blocks in the
 same process. `arm64_cpu` checks integer instructions, flags, control flow, stack calls,
-memory faults, native integer callbacks, and static ELF loading. `arm64_metal` checks an
+memory faults, native callbacks, writable-code invalidation and static ELF loading.
+`arm64_elf` checks dynamic relocation, imports, load bias, initialization order and malformed
+images. `arm64_libc` checks guest heap/memory, strings, integer/floating conversions, stdio
+and variadic formatting. `arm64_metal` checks an
 x86-64 guest calls through the ARM64 callback bridge to Metal compute and RDNA rendering,
 with results read back by the guest. It requires GPU access and has the `gpu` label.
 
 `arm64_integer` checks narrow registers, arithmetic flags, shifts, rotates, conditional writes,
 stack faults and segmented addresses. `arm64_wide_integer` compares MUL/IMUL/DIV/IDIV with
 an arbitrary-precision reference. `arm64_vector` compares native SSE/SSE2-to-NEON operations
-with scalar lanes and checks vector memory faults.
+with scalar lanes and checks vector memory faults, scalar moves and XMM MOVQ.
 `arm64_compiled_kernel` builds the same C source for native ARM64 and x86-64 ELF at O0/O2/O3,
 then compares execution results, including compiler-generated SSE2. It needs an ELF LLD tool
 (`ld.lld` or `rust-lld`); install it with `brew install lld` or supply
 `-DANYPS5_ELF_LINKER=/absolute/path/to/ld.lld`. This test is omitted with a configure message
-when LLD is unavailable. LLD is only a test build tool; the runtime does not link to it.
+when LLD is unavailable. `arm64_dynamic_kernel` uses the same linker to check dynamic ELF
+initialization, native libc calls, floating returns, compiler-generated va_list and cumulative
+instruction budgets at O0/O2/O3. LLD is only a test build tool; the runtime does not link to it.
+
+`arm64_video` runs x86-64 instructions through the ARM64 native VideoOut bridge and verifies
+pixels from the actual Metal window drawable. It requires GPU and desktop access and has the
+`gpu` label. This test uses a generated framebuffer, not a supplied game.
 
 CPU executables are ad-hoc signed with hardened runtime and the
 [`allow-jit` entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.allow-jit)
@@ -83,8 +95,8 @@ by default. This uses local `codesign` without a signing certificate. Set
 `-DANYPS5_MACOS_HARDENED_JIT=OFF` for an ordinary development build. Distribution signing and
 notarization are not configured.
 
-The full CPU instruction set, dynamic guest loader, system PRX ABI, and AGC command submission
-port remain unimplemented. Building these components does not enable game execution on macOS.
+The full CPU instruction set, complete dynamic loader, PS5 process/payload startup, most system
+PRX bindings and the AGC command submission port remain unimplemented. Building these components does not enable game execution on macOS.
 
 ## CMake flags
 
