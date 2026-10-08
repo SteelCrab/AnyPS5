@@ -1,4 +1,4 @@
-add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp NativeScanning.cpp NativeKernel.cpp NativeThreads.cpp NativeMath.cpp NativePosix.cpp NativeLocale.cpp NativeProcess.cpp NativeSystem.cpp
+add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp NativeScanning.cpp NativeKernel.cpp NativeThreads.cpp NativeSignals.cpp NativeMath.cpp NativePosix.cpp NativeLocale.cpp NativeProcess.cpp NativeSystem.cpp
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/src/x86/X64InstructionDecoder.cpp")
 target_include_directories(anyps5_arm64 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/include"
@@ -30,6 +30,11 @@ add_executable(anyps5_arm64_run Main.cpp)
 target_link_libraries(anyps5_arm64_run PRIVATE anyps5_native_video anyps5_native_audio)
 anyps5_sign_jit(anyps5_arm64_run)
 if(BUILD_TESTING)
+    add_test_executable(arm64_signal_tests tests/NativeSignalsTests.cpp)
+    target_link_libraries(arm64_signal_tests PRIVATE anyps5_arm64)
+    anyps5_sign_jit(arm64_signal_tests)
+    add_test(NAME arm64_signals COMMAND arm64_signal_tests)
+    set_tests_properties(arm64_signals PROPERTIES TIMEOUT 30)
     add_test_executable(arm64_audio_tests tests/NativeAudioTests.cpp)
     target_link_libraries(arm64_audio_tests PRIVATE anyps5_native_audio)
     anyps5_sign_jit(arm64_audio_tests)

@@ -80,6 +80,9 @@ errors and nested callback instruction budgets. `arm64_thread_kernel` compiles x
 at O0/O2/O3 and executes four workers with shared heap access, once initialization, thread
 keys/destructors, separate errno cells, a condition barrier and semaphores. It also checks
 joined/detached worker failure propagation and process teardown with a blocked detached worker.
+Thread scheduling queries translate the guest policy numbers to native pthread policies.
+Priority ranges come from the native scheduler. Parameter changes affect the actual native
+worker; invalid priorities are rejected before macOS can clamp them.
 `arm64_math` checks XMM floating arguments/returns, mixed integer arguments, integer returns,
 signed zero, NaNs, domain/range errno and preservation of the host floating environment.
 `arm64_libc` also checks aligned allocations, UTF-8 wide-string precision at a guest mapping
@@ -92,6 +95,20 @@ characters, bounded wide strings, formatted wide output, collation and broken-do
 
 `arm64_process` checks per-DSO/LIFO cleanup, concurrent one-time finalization, immediate exits,
 callback registration during cleanup and retained instruction budgets on failure.
+`arm64_signals` checks four-word signal sets, per-thread masks, pending/coalesced delivery,
+automatic masks, nested/one-shot handlers, default termination, guest stop/resume, interrupted
+registers, the x86-64 red zone and callback instruction budgets. `arm64_signal_kernel` runs
+x86-64 O0/O2/O3 handlers, thread-mask inheritance, targeted worker signals, native scheduling,
+worker signal termination and abort handlers. Ordinary signals 1 through 31 are delivered
+inside the guest CPU. Guest process/group ID 1 belongs to this isolated runtime; `kill` never
+forwards a guest PID to a host process. The ABI follows the
+[FreeBSD signal header](https://github.com/freebsd/freebsd-src/blob/stable/9/sys/sys/signal.h)
+and [signal-set layout](https://github.com/freebsd/freebsd-src/blob/stable/9/sys/sys/_sigset.h).
+Disposition changes and default actions follow the
+[FreeBSD signal implementation](https://github.com/freebsd/freebsd-src/blob/stable/9/sys/kern/kern_sig.c).
+Real-time queues, alternate stacks, siginfo/ucontext, CPU-fault signals, host-signal capture,
+child-process events and signal interruption/restart of blocking I/O/waits are not implemented.
+Unsupported action flags and real-time delivery throw explicit errors.
 `arm64_process_kernel` executes compiled x86-64 O0/O2/O3 termination callbacks and ELF finalizers,
 checks buffered output and status codes, and wakes a blocked main thread when a worker exits.
 `arm64_system` checks native CPU/memory queries, guest MIB translation, lengths, partial copies

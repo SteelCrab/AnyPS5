@@ -46,9 +46,9 @@ public:
     Cpu& operator=(const Cpu&) = delete;
     std::uint64_t Run(CpuState& state, std::uint64_t instructionBudget = 1000000, std::stop_token stop = {});
     void RunRemaining(CpuState& state, std::uint64_t& instructionBudget, std::stop_token stop = {});
-    [[nodiscard]] std::uint64_t Invoke(const CpuState& caller, std::uint64_t address, std::array<std::uint64_t, 6> arguments = {});
+    [[nodiscard]] std::uint64_t Invoke(const CpuState& caller, std::uint64_t address, std::array<std::uint64_t, 6> arguments = {}, bool preserveRedZone = false);
     void Bind(std::uint64_t guestAddress, HostFunction function, void* context = nullptr);
-    void SetObserver(void (*observer)(void*), void* context);
+    void AddObserver(void (*observer)(Cpu&, CpuState&, void*), void* context);
     [[nodiscard]] std::size_t CompiledBlocks() const;
 private:
     struct Impl;

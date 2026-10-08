@@ -9,6 +9,7 @@
 #include "NativeProcess.hpp"
 #include "NativeSystem.hpp"
 #include "NativeAudio.hpp"
+#include "NativeSignals.hpp"
 #include <charconv>
 #include <cstdio>
 #include <cstring>
@@ -46,6 +47,7 @@ int main(int argc, char** argv) {
         AnyPS5::Arm64::NativeProcess process(libc);
         AnyPS5::Arm64::NativeSystem system(libc);
         AnyPS5::Arm64::NativeAudio audio;
+        AnyPS5::Arm64::NativeSignals signals(libc);
         AnyPS5::Arm64::NativeKernel kernel;
         AnyPS5::Arm64::NativeVideoOut video(kernel);
         AnyPS5::Arm64::ElfOptions options;
@@ -66,6 +68,8 @@ int main(int argc, char** argv) {
             if (systemResolved != 0) return systemResolved;
             const auto audioResolved = AnyPS5::Arm64::NativeAudio::Resolve(symbol);
             if (audioResolved != 0) return audioResolved;
+            const auto signalResolved = AnyPS5::Arm64::NativeSignals::Resolve(symbol);
+            if (signalResolved != 0) return signalResolved;
             const auto kernelResolved = kernel.Resolve(symbol);
             return kernelResolved != 0 ? kernelResolved : video.Resolve(symbol);
         };
@@ -86,9 +90,11 @@ int main(int argc, char** argv) {
         math.Bind(cpu);
         process.SetFinalizers(image.finalizers);
         process.Bind(cpu);
+        process.SetSignals(signals);
         system.Bind(cpu);
         audio.Bind(cpu);
         AnyPS5::Arm64::NativeThreads threads(libc, image.memory, budget);
+        threads.SetSignals(signals);
         threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); math.Bind(threadCpu); posix.Bind(threadCpu); locale.Bind(threadCpu, image.memory); process.Bind(threadCpu); system.Bind(threadCpu); audio.Bind(threadCpu); }, [&] { kernel.Shutdown(); posix.Shutdown(); audio.Shutdown(); });
         threads.Bind(cpu);
         const auto initialBudget = budget;
@@ -119,6 +125,10 @@ int main(int argc, char** argv) {
         } catch (const AnyPS5::Arm64::GuestExit& exit) {
             std::printf("Native ARM64 execution: guest %s with status %d, %zu translated blocks, %llu instructions\n",
                 exit.Aborted() ? "aborted" : "exited", exit.Status(), cpu.CompiledBlocks(), static_cast<unsigned long long>(initialBudget - budget));
+            return exit.Status();
+        } catch (const AnyPS5::Arm64::GuestSignalExit& exit) {
+            std::printf("Native ARM64 execution: guest terminated by signal %d, %zu translated blocks, %llu instructions\n",
+                exit.Signal(), cpu.CompiledBlocks(), static_cast<unsigned long long>(initialBudget - budget));
             return exit.Status();
         }
         std::printf("Native ARM64 execution: guest returned 0x%llx, %zu translated blocks, %llu instructions\n",

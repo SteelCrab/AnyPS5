@@ -1,4 +1,6 @@
 #include "NativeThreads.hpp"
+#include "NativeSignals.hpp"
+#include "NativePosix.hpp"
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -7,6 +9,7 @@
 #include <limits>
 #include <mutex>
 #include <pthread.h>
+#include <sched.h>
 #include <stop_token>
 #include <stdexcept>
 #include <string>
@@ -25,7 +28,8 @@ enum class Operation {
     CondInit, CondDestroy, CondSignal, CondBroadcast, CondWait, CondTimed,
     RwInit, RwDestroy, RwRead, RwWrite, RwTryRead, RwTryWrite, RwUnlock,
     KeyCreate, KeyDelete, GetSpecific, SetSpecific, Once,
-    SemInit, SemDestroy, SemTry, SemWait, SemTimed, SemValue, SemPost
+    SemInit, SemDestroy, SemTry, SemWait, SemTimed, SemValue, SemPost,
+    SchedGet, SchedSet, PriorityMin, PriorityMax
 };
 struct Export { std::string_view name; Operation operation; };
 const auto exports = std::to_array<Export>({
@@ -48,7 +52,9 @@ const auto exports = std::to_array<Export>({
     {"pthread_setspecific", Operation::SetSpecific}, {"pthread_once", Operation::Once},
     {"sem_init", Operation::SemInit}, {"sem_destroy", Operation::SemDestroy}, {"sem_trywait", Operation::SemTry},
     {"sem_wait", Operation::SemWait}, {"sem_timedwait", Operation::SemTimed}, {"sem_getvalue", Operation::SemValue},
-    {"sem_post", Operation::SemPost}
+    {"sem_post", Operation::SemPost}, {"pthread_getschedparam", Operation::SchedGet},
+    {"pthread_setschedparam", Operation::SchedSet}, {"sched_get_priority_min", Operation::PriorityMin},
+    {"sched_get_priority_max", Operation::PriorityMax}
 });
 
 template<class TValue>
@@ -64,6 +70,22 @@ void write(GuestMemory& memory, std::uint64_t address, const TValue& value) {
 }
 
 std::uint64_t integer(int value) { return static_cast<std::uint64_t>(static_cast<std::int64_t>(value)); }
+
+int nativePolicy(int guest) {
+    switch (guest) {
+    case 1: return SCHED_FIFO;
+    case 2: return SCHED_OTHER;
+    case 3: return SCHED_RR;
+    default: return -1;
+    }
+}
+
+int guestPolicy(int native) {
+    if (native == SCHED_FIFO) return 1;
+    if (native == SCHED_OTHER) return 2;
+    if (native == SCHED_RR) return 3;
+    throw std::runtime_error("Native thread scheduling policy is unsupported");
+}
 
 struct Timespec { std::int64_t seconds, nanoseconds; };
 std::chrono::system_clock::time_point deadline(const GuestMemory& memory, std::uint64_t address) {
@@ -110,6 +132,7 @@ struct NativeThreads::Impl {
         std::mutex gate;
         std::condition_variable changed;
         std::thread native;
+        pthread_t nativeHandle = nullptr;
         std::mutex joinMutex;
         std::uint64_t result = 0;
         std::exception_ptr failure;
@@ -135,6 +158,7 @@ struct NativeThreads::Impl {
     std::array<Binding, exports.size()> bindings{};
     std::function<void(Cpu&)> attach;
     std::function<void()> shutdown;
+    NativeSignals* signals = nullptr;
     std::stop_source stop;
     std::atomic<bool> failed{false};
     std::mutex failureMutex;
@@ -144,6 +168,7 @@ struct NativeThreads::Impl {
         if (budget == 0) throw std::invalid_argument("Native thread instruction budget is zero");
         auto main = std::make_shared<Thread>();
         main->adopted = true;
+        main->nativeHandle = pthread_self();
         identities.emplace(std::this_thread::get_id(), nextObject);
         threads.emplace(nextObject++, main);
     }
@@ -172,6 +197,7 @@ struct NativeThreads::Impl {
     }
     void stopAll() {
         stop.request_stop();
+        if (signals) signals->Shutdown();
         if (shutdown) shutdown();
         {
             std::lock_guard lock(registry);
@@ -290,11 +316,20 @@ std::uint64_t NativeThreads::Resolve(const ElfImport& symbol) {
 }
 
 void NativeThreads::Bind(Cpu& cpu) {
-    cpu.SetObserver(+[](void* context) { static_cast<Impl*>(context)->check(); }, impl.get());
+    cpu.AddObserver(+[](Cpu&, CpuState&, void* context) { static_cast<Impl*>(context)->check(); }, impl.get());
+    if (impl->signals) impl->signals->Bind(cpu, impl->self());
     for (std::size_t i = 0; i < exports.size(); ++i) cpu.Bind(functionBase + i * 16, +[](const HostCall& call, void* context) {
         const auto& binding = *static_cast<Impl::Binding*>(context);
         return binding.owner->invoke(call, static_cast<std::size_t>(binding.operation));
     }, &impl->bindings[i]);
+}
+
+void NativeThreads::SetSignals(NativeSignals& signals) {
+    std::lock_guard lock(impl->registry);
+    if (impl->threads.size() != 1 || impl->signals) throw std::runtime_error("Native signals must be configured before creating threads");
+    const auto main = impl->identities.at(std::this_thread::get_id());
+    signals.RegisterThread(main);
+    impl->signals = &signals;
 }
 
 void NativeThreads::SetBindings(std::function<void(Cpu&)> attach, std::function<void()> shutdown) {
@@ -313,6 +348,46 @@ std::uint64_t NativeThreads::invoke(const HostCall& call, std::size_t operation)
     switch (op) {
     case Operation::Self: return impl->self();
     case Operation::Equal: return args[0] == args[1];
+    case Operation::PriorityMin:
+    case Operation::PriorityMax: {
+        const auto policy = nativePolicy(static_cast<std::int32_t>(args[0]));
+        if (policy == -1) { impl->libc.SetError(memory, 22); return UINT64_MAX; }
+        const auto result = op == Operation::PriorityMin ? ::sched_get_priority_min(policy) : ::sched_get_priority_max(policy);
+        if (result == -1) impl->libc.SetError(memory, guestError(errno));
+        return integer(result);
+    }
+    case Operation::SchedGet:
+    case Operation::SchedSet: {
+        const bool get = op == Operation::SchedGet;
+        if (get ? (!memory.Contains(args[1], 4, Write) || !memory.Contains(args[2], 4, Write)) : !memory.Contains(args[2], 4, Read)) return 14;
+        const auto policy = get ? 0 : nativePolicy(static_cast<std::int32_t>(args[1]));
+        if (!get && policy == -1) return 22;
+        sched_param parameters{};
+        if (!get) {
+            parameters.sched_priority = read<int>(memory, args[2]);
+            const auto minimum = ::sched_get_priority_min(policy);
+            if (minimum == -1) return guestError(errno);
+            const auto maximum = ::sched_get_priority_max(policy);
+            if (maximum == -1) return guestError(errno);
+            if (parameters.sched_priority < minimum || parameters.sched_priority > maximum) return 22;
+        }
+        std::shared_ptr<Impl::Thread> thread;
+        {
+            std::lock_guard lock(impl->registry);
+            const auto found = impl->threads.find(args[0]);
+            if (found == impl->threads.end()) return 3;
+            thread = found->second;
+        }
+        std::lock_guard lock(thread->gate);
+        if (thread->finished) return 3;
+        if (!get) return guestError(::pthread_setschedparam(thread->nativeHandle, policy, &parameters));
+        int native = 0;
+        const auto result = ::pthread_getschedparam(thread->nativeHandle, &native, &parameters);
+        if (result != 0) return guestError(result);
+        write(memory, args[1], guestPolicy(native));
+        write(memory, args[2], parameters.sched_priority);
+        return 0;
+    }
     case Operation::Name: {
         if (args[0] != impl->self()) return 45;
         std::string name;
@@ -375,6 +450,7 @@ std::uint64_t NativeThreads::invoke(const HostCall& call, std::size_t operation)
         memory.Map(stack, attribute.stackSize, Read | Write);
         try {
             impl->threads.emplace(handle, thread);
+            if (impl->signals) impl->signals->RegisterThread(handle, impl->identities.at(std::this_thread::get_id()));
             write(memory, args[0], handle);
             const auto entry = args[2], argument = args[3];
             thread->native = std::thread([this, thread, handle, stack, attribute, entry, argument] {
@@ -402,6 +478,7 @@ std::uint64_t NativeThreads::invoke(const HostCall& call, std::size_t operation)
                 catch (...) { failure = std::current_exception(); }
                 try { impl->memory.Unmap(stack); } catch (...) { if (!failure) failure = std::current_exception(); }
                 if (failure) impl->fail(failure);
+                if (impl->signals) impl->signals->UnregisterThread(handle);
                 {
                     std::lock_guard lock(impl->registry);
                     impl->identities.erase(std::this_thread::get_id());
@@ -414,7 +491,9 @@ std::uint64_t NativeThreads::invoke(const HostCall& call, std::size_t operation)
                 }
                 thread->changed.notify_all();
             });
+            thread->nativeHandle = thread->native.native_handle();
         } catch (...) {
+            if (impl->signals) impl->signals->UnregisterThread(handle);
             impl->threads.erase(handle);
             memory.Unmap(stack);
             write<std::uint64_t>(memory, args[0], 0);

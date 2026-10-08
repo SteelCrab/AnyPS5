@@ -1,4 +1,5 @@
 #include "NativeProcess.hpp"
+#include "NativeSignals.hpp"
 #include <algorithm>
 #include <array>
 #include <iterator>
@@ -25,6 +26,11 @@ int GuestExit::Status() const { return status; }
 bool GuestExit::Aborted() const { return aborted; }
 
 NativeProcess::NativeProcess(NativeLibc& libc) : libc(libc) {}
+
+void NativeProcess::SetSignals(NativeSignals& signals) {
+    if (this->signals) throw std::runtime_error("Native process signal provider was already set");
+    this->signals = &signals;
+}
 
 std::uint64_t NativeProcess::Resolve(const ElfImport& symbol) {
     if (symbol.type != 0 && symbol.type != 2) return 0;
@@ -108,6 +114,10 @@ std::uint64_t NativeProcess::invoke(const HostCall& call, std::size_t value) {
         throw GuestExit(static_cast<int>(call.arguments[0]));
     case Operation::Abort:
         libc.DiscardBufferedOutput();
+        if (signals) {
+            try { signals->Abort(call); }
+            catch (const GuestSignalExit& exit) { if (exit.Signal() != 6) throw; }
+        }
         throw GuestExit(134, true);
     case Operation::Complete:
         finish(call);

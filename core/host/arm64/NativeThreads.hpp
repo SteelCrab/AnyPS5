@@ -5,6 +5,8 @@
 
 namespace AnyPS5::Arm64 {
 
+class NativeSignals;
+
 class NativeThreads {
 public:
     NativeThreads(NativeLibc& libc, GuestMemory& memory, std::uint64_t instructionBudget = 1000000);
@@ -14,6 +16,7 @@ public:
     [[nodiscard]] static std::uint64_t Resolve(const ElfImport& symbol);
     void Bind(Cpu& cpu);
     void SetBindings(std::function<void(Cpu&)> attach, std::function<void()> shutdown = {});
+    void SetSignals(NativeSignals& signals);
     void Finish();
 private:
     struct Impl;

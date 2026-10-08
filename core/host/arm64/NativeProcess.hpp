@@ -6,6 +6,8 @@
 
 namespace AnyPS5::Arm64 {
 
+class NativeSignals;
+
 class GuestExit final : public std::runtime_error {
 public:
     explicit GuestExit(int status, bool aborted = false);
@@ -23,6 +25,7 @@ public:
     [[nodiscard]] static std::uint64_t CompletionAddress();
     void Bind(Cpu& cpu);
     void SetFinalizers(std::vector<std::uint64_t> functions);
+    void SetSignals(NativeSignals& signals);
 private:
     struct Callback {
         std::uint64_t function;
@@ -30,6 +33,7 @@ private:
         std::uint64_t dso;
     };
     NativeLibc& libc;
+    NativeSignals* signals = nullptr;
     std::mutex mutex;
     std::vector<Callback> callbacks;
     std::vector<std::uint64_t> finalizers;

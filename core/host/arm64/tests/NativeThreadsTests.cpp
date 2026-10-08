@@ -2,6 +2,8 @@
 #include <array>
 #include <cstdio>
 #include <limits>
+#include <pthread.h>
+#include <sched.h>
 #include <stdexcept>
 #include <string>
 
@@ -93,6 +95,30 @@ void testOnceBudget() {
     require(self != 0 && fixture.Call("pthread_join", {self}) == 11, "Guest thread did not detect joining itself");
 }
 
+void testScheduling() {
+    Fixture fixture;
+    const auto self = fixture.Call("pthread_self");
+    int policy = 0;
+    sched_param parameters{};
+    require(::pthread_getschedparam(pthread_self(), &policy, &parameters) == 0, "Cannot query the host scheduling policy");
+    const auto guest = policy == SCHED_FIFO ? 1 : policy == SCHED_OTHER ? 2 : 3;
+    require(fixture.Call("pthread_getschedparam", {self, 0x1100, 0x1110}) == 0 && fixture.Load<int>(0x1100) == guest && fixture.Load<int>(0x1110) == parameters.sched_priority, "Scheduling policy or priority was fabricated");
+    for (int guestPolicy = 1; guestPolicy <= 3; ++guestPolicy) {
+        const auto native = guestPolicy == 1 ? SCHED_FIFO : guestPolicy == 2 ? SCHED_OTHER : SCHED_RR;
+        require(fixture.Call("sched_get_priority_min", {static_cast<unsigned>(guestPolicy)}) == static_cast<unsigned>(::sched_get_priority_min(native)) && fixture.Call("sched_get_priority_max", {static_cast<unsigned>(guestPolicy)}) == static_cast<unsigned>(::sched_get_priority_max(native)), "Guest priority query used the wrong native scheduling policy");
+    }
+    require(fixture.Call("pthread_setschedparam", {self, static_cast<unsigned>(guest), 0x1110}) == 0, "Cannot set the current native scheduling parameters");
+    require(fixture.Call("pthread_getschedparam", {999999, 0x1100, 0x1110}) == 3 && fixture.Call("pthread_getschedparam", {self, 0xdead, 0x1110}) == 14, "Scheduling query accepted an invalid thread or pointer");
+    require(fixture.Call("pthread_setschedparam", {self, 99, 0x1110}) == 22 && fixture.Call("sched_get_priority_max", {99}) == UINT64_MAX, "Unknown scheduling policy was accepted");
+    require(fixture.Load<int>(fixture.Call("__error")) == 22, "Scheduling query error did not set guest errno");
+    const auto maximum = ::sched_get_priority_max(policy) + 1;
+    require(fixture.memory.TryWrite(0x1110, std::as_bytes(std::span(&maximum, 1))), "Cannot set invalid priority");
+    require(fixture.Call("pthread_setschedparam", {self, static_cast<unsigned>(guest), 0x1110}) == 22, "Out-of-range native priority succeeded");
+    sched_param after{};
+    int afterPolicy = 0;
+    require(::pthread_getschedparam(pthread_self(), &afterPolicy, &after) == 0 && policy == afterPolicy && parameters.sched_priority == after.sched_priority, "Invalid guest scheduling call changed host scheduling state");
+}
+
 }
 
 int main() {
@@ -100,6 +126,7 @@ int main() {
         testMutexes();
         testTimedSynchronization();
         testOnceBudget();
+        testScheduling();
         std::puts("Native thread ownership, recursive locks, deadlines, semaphore errors and nested callback budgets passed");
         return 0;
     } catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }

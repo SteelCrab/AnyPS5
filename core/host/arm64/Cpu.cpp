@@ -8,6 +8,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 namespace AnyPS5::Arm64 {
 
@@ -64,8 +65,8 @@ struct Cpu::Impl {
     std::unordered_map<std::uint64_t, Binding> functions;
     std::uint64_t* remaining = nullptr;
     std::stop_token stop;
-    void (*observer)(void*) = nullptr;
-    void* observerContext = nullptr;
+    struct Observer { void (*function)(Cpu&, CpuState&, void*); void* context; };
+    std::vector<Observer> observers;
     explicit Impl(GuestMemory& memory) : memory(memory) {}
 };
 
@@ -97,7 +98,7 @@ void Cpu::RunRemaining(CpuState& state, std::uint64_t& instructionBudget, std::s
     state.fault = 0;
     while (state.rip != 0) {
         if (stop.stop_requested()) throw ExecutionStopped();
-        if (impl->observer) impl->observer(impl->observerContext);
+        for (const auto& observer : impl->observers) observer.function(*this, state, observer.context);
         const auto codeVersion = impl->memory.CodeVersion();
         if (impl->codeVersion != codeVersion) {
             impl->blocks.clear();
@@ -148,11 +149,11 @@ void Cpu::RunRemaining(CpuState& state, std::uint64_t& instructionBudget, std::s
     }
 }
 
-std::uint64_t Cpu::Invoke(const CpuState& caller, std::uint64_t address, std::array<std::uint64_t, 6> arguments) {
-    if (!impl->remaining || address == 0 || caller.registers[4] < 16) throw std::runtime_error("Invalid nested native guest invocation");
+std::uint64_t Cpu::Invoke(const CpuState& caller, std::uint64_t address, std::array<std::uint64_t, 6> arguments, bool preserveRedZone) {
+    if (!impl->remaining || address == 0 || caller.registers[4] < (preserveRedZone ? 144 : 16)) throw std::runtime_error("Invalid nested native guest invocation");
     CpuState nested = caller;
     nested.rip = address;
-    nested.registers[4] -= 16;
+    nested.registers[4] = preserveRedZone ? ((caller.registers[4] - 128) & ~std::uint64_t{15}) - 8 : caller.registers[4] - 16;
     const std::uint64_t sentinel = 0;
     if (!impl->memory.TryWrite(nested.registers[4], std::as_bytes(std::span(&sentinel, 1)))) throw std::runtime_error("Nested native guest stack is outside writable memory");
     const std::array<std::uint8_t, 6> registers{7, 6, 2, 1, 8, 9};
@@ -163,9 +164,9 @@ std::uint64_t Cpu::Invoke(const CpuState& caller, std::uint64_t address, std::ar
 
 std::size_t Cpu::CompiledBlocks() const { return impl->blocks.size(); }
 
-void Cpu::SetObserver(void (*observer)(void*), void* context) {
-    impl->observer = observer;
-    impl->observerContext = context;
+void Cpu::AddObserver(void (*observer)(Cpu&, CpuState&, void*), void* context) {
+    if (!observer || impl->remaining) throw std::runtime_error("Invalid native CPU observer registration");
+    impl->observers.push_back({observer, context});
 }
 
 }
