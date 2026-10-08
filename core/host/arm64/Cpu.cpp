@@ -79,6 +79,12 @@ void Cpu::Bind(std::uint64_t guestAddress, HostFunction function, void* context)
 }
 
 std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget, std::stop_token stop) {
+    const auto initialBudget = instructionBudget;
+    RunRemaining(state, instructionBudget, stop);
+    return initialBudget - instructionBudget;
+}
+
+void Cpu::RunRemaining(CpuState& state, std::uint64_t& instructionBudget, std::stop_token stop) {
     struct Scope {
         Impl& impl;
         std::uint64_t* previous;
@@ -87,7 +93,6 @@ std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget, std::st
     } scope{*impl, impl->remaining, impl->stop};
     impl->remaining = &instructionBudget;
     impl->stop = stop;
-    const auto initialBudget = instructionBudget;
     state.memory = &impl->memory;
     state.fault = 0;
     while (state.rip != 0) {
@@ -141,7 +146,6 @@ std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget, std::st
             throw std::runtime_error(message);
         }
     }
-    return initialBudget - instructionBudget;
 }
 
 std::uint64_t Cpu::Invoke(const CpuState& caller, std::uint64_t address, std::array<std::uint64_t, 6> arguments) {
@@ -153,9 +157,7 @@ std::uint64_t Cpu::Invoke(const CpuState& caller, std::uint64_t address, std::ar
     if (!impl->memory.TryWrite(nested.registers[4], std::as_bytes(std::span(&sentinel, 1)))) throw std::runtime_error("Nested native guest stack is outside writable memory");
     const std::array<std::uint8_t, 6> registers{7, 6, 2, 1, 8, 9};
     for (std::size_t i = 0; i < arguments.size(); ++i) nested.registers[registers[i]] = arguments[i];
-    auto* remaining = impl->remaining;
-    const auto consumed = Run(nested, *remaining, impl->stop);
-    *remaining -= consumed;
+    RunRemaining(nested, *impl->remaining, impl->stop);
     return nested.registers[0];
 }
 

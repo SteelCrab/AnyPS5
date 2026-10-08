@@ -32,6 +32,8 @@ public:
     void SetError(GuestMemory& memory, int error) const;
     [[nodiscard]] std::uint64_t Open(GuestMemory& memory, const char* path, const char* mode);
     [[nodiscard]] int Close(GuestMemory& memory, std::uint64_t address);
+    [[nodiscard]] int FlushAll(GuestMemory& memory);
+    void DiscardBufferedOutput();
     [[nodiscard]] std::FILE* File(std::uint64_t address) const;
     void SyncFile(GuestMemory& memory, std::uint64_t address) const;
     [[nodiscard]] bool HasDescriptor(int descriptor) const;
@@ -45,6 +47,7 @@ private:
     struct Stream {
         std::FILE* file;
         bool allocated;
+        bool writable;
         std::shared_ptr<NativeStreamDescriptor> descriptor;
     };
     std::unordered_map<std::uint64_t, Stream> streams;
@@ -52,6 +55,7 @@ private:
     std::uint64_t nextAllocation = 0x10000000000;
     std::uint64_t nextStream = 0x730000000;
     bool bound = false;
+    bool discardOnClose = false;
     GuestMemory* guestMemory = nullptr;
     mutable std::recursive_mutex mutex;
     locale_t activeLocale = nullptr;

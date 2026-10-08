@@ -154,6 +154,7 @@ struct NativeThreads::Impl {
         return found->second;
     }
     void running() {
+        check();
         if (stop.stop_requested()) throw ExecutionStopped();
     }
     void check() {
@@ -162,9 +163,31 @@ struct NativeThreads::Impl {
         std::rethrow_exception(processFailure);
     }
     void fail(std::exception_ptr failure) {
-        std::lock_guard lock(failureMutex);
-        if (!processFailure) processFailure = failure;
-        failed.store(true, std::memory_order_release);
+        {
+            std::lock_guard lock(failureMutex);
+            if (!processFailure) processFailure = failure;
+            failed.store(true, std::memory_order_release);
+        }
+        stopAll();
+    }
+    void stopAll() {
+        stop.request_stop();
+        if (shutdown) shutdown();
+        {
+            std::lock_guard lock(registry);
+            for (const auto& [handle, thread] : threads) {
+                std::lock_guard lock(thread->gate);
+                thread->changed.notify_all();
+            }
+            const auto wake = [](auto& objects) {
+                for (const auto& [handle, object] : objects) { std::lock_guard lock(object->gate); object->changed.notify_all(); }
+            };
+            wake(mutexes);
+            wake(conditions);
+            wake(rwlocks);
+            wake(semaphores);
+        }
+        onceChanged.notify_all();
     }
     template<class TObject>
     std::shared_ptr<TObject> object(std::unordered_map<std::uint64_t, std::shared_ptr<TObject>>& objects, std::uint64_t address, bool initialize) {
@@ -245,25 +268,14 @@ NativeThreads::~NativeThreads() {
 }
 
 void NativeThreads::Finish() {
-    impl->stop.request_stop();
-    if (impl->shutdown) impl->shutdown();
+    impl->stopAll();
     std::vector<std::shared_ptr<Impl::Thread>> threads;
     {
         std::lock_guard lock(impl->registry);
         for (const auto& [handle, thread] : impl->threads) {
             threads.push_back(thread);
-            std::lock_guard lock(thread->gate);
-            thread->changed.notify_all();
         }
-        const auto wake = [](auto& objects) {
-            for (const auto& [handle, object] : objects) { std::lock_guard lock(object->gate); object->changed.notify_all(); }
-        };
-        wake(impl->mutexes);
-        wake(impl->conditions);
-        wake(impl->rwlocks);
-        wake(impl->semaphores);
     }
-    impl->onceChanged.notify_all();
     for (const auto& thread : threads) {
         std::lock_guard lock(thread->joinMutex);
         if (thread->native.joinable()) thread->native.join();

@@ -129,6 +129,14 @@ if(BUILD_TESTING)
             find_program(ANYPS5_ELF_LINKER NAMES ld.lld rust-lld
                 HINTS /opt/homebrew/opt/lld/bin /opt/homebrew/opt/llvm/bin ${anyps5RustLinkerPaths})
             if(ANYPS5_ELF_LINKER)
+                add_test(NAME arm64_audio_kernel COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/core/host/arm64/tests/test_audio_kernel.py
+                    $<TARGET_FILE:anyps5_arm64_run> ${CMAKE_C_COMPILER} ${ANYPS5_ELF_LINKER})
+                set_tests_properties(arm64_audio_kernel PROPERTIES LABELS audio TIMEOUT 120)
+                add_test(NAME arm64_process_kernel COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/core/host/arm64/tests/test_process_kernel.py
+                    $<TARGET_FILE:anyps5_arm64_run> ${CMAKE_C_COMPILER} ${ANYPS5_ELF_LINKER})
+                set_tests_properties(arm64_process_kernel PROPERTIES TIMEOUT 120)
                 add_test(NAME arm64_thread_kernel COMMAND ${Python3_EXECUTABLE}
                     ${CMAKE_CURRENT_SOURCE_DIR}/core/host/arm64/tests/test_thread_kernel.py
                     $<TARGET_FILE:anyps5_arm64_run> ${CMAKE_C_COMPILER} ${ANYPS5_ELF_LINKER})

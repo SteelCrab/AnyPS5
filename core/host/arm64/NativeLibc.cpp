@@ -270,7 +270,7 @@ std::uint64_t closeFile(const HostCall& call, void* context) {
 }
 std::uint64_t flushFile(const HostCall& call, void* context) {
     auto& libc = *static_cast<NativeLibc*>(context);
-    const auto result = std::fflush(call.arguments[0] == 0 ? nullptr : libc.File(call.arguments[0]));
+    const auto result = call.arguments[0] == 0 ? libc.FlushAll(call.memory) : std::fflush(libc.File(call.arguments[0]));
     if (result == EOF) libc.SetError(call.memory, errno);
     if (call.arguments[0] != 0) libc.SyncFile(call.memory, call.arguments[0]);
     return integer(result);
@@ -467,7 +467,7 @@ void NativeLibc::Bind(Cpu& cpu, GuestMemory& memory) {
         descriptor->guest = static_cast<int>(i);
         auto* file = stream(descriptor, i == 0, i != 0);
         if (!file) throw std::runtime_error("Cannot initialize a guest standard stream");
-        try { streams.emplace(address, Stream{file, false, descriptor}); }
+        try { streams.emplace(address, Stream{file, false, i != 0, descriptor}); }
         catch (...) { std::fclose(file); throw; }
         std::setvbuf(file, nullptr, i == 2 ? _IONBF : _IOLBF, 0);
         writeBytes(memory, globalBase + 16 + i * 8, std::as_bytes(std::span(&address, 1)));
@@ -566,8 +566,27 @@ void NativeLibc::SetError(GuestMemory& memory, int error) const {
 
 NativeLibc::~NativeLibc() {
     for (const auto& [address, stream] : streams) {
+        if (discardOnClose) ::fpurge(stream.file);
         std::fclose(stream.file);
     }
+}
+
+int NativeLibc::FlushAll(GuestMemory& memory) {
+    std::lock_guard lock(mutex);
+    int error = 0;
+    for (const auto& [address, stream] : streams) {
+        if (!stream.writable) continue;
+        if (std::fflush(stream.file) == EOF && error == 0) error = errno;
+        SyncFile(memory, address);
+    }
+    if (error != 0) { SetError(memory, error); errno = error; return EOF; }
+    return 0;
+}
+
+void NativeLibc::DiscardBufferedOutput() {
+    std::lock_guard lock(mutex);
+    discardOnClose = true;
+    for (const auto& [address, stream] : streams) if (stream.writable) ::fpurge(stream.file);
 }
 
 std::uint64_t NativeLibc::Open(GuestMemory& memory, const char* path, const char* mode) {
@@ -589,7 +608,7 @@ std::uint64_t NativeLibc::Open(GuestMemory& memory, const char* path, const char
     try {
         memory.Map(address, 0x200, Read | Write);
         mapped = true;
-        streams.emplace(address, Stream{file, true, descriptor});
+        streams.emplace(address, Stream{file, true, mode[0] != 'r' || both, descriptor});
     } catch (...) {
         std::fclose(file);
         if (mapped) memory.Unmap(address);

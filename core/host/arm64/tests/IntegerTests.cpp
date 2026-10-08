@@ -180,6 +180,73 @@ void testMemoryWidthsAndSegments() {
     require(relative.state.registers[0] == original[0], "EIP-relative addressing failed");
 }
 
+void testBitTest() {
+    for (const unsigned width : {16u, 32u, 64u}) {
+        for (const bool immediate : {false, true}) {
+            auto code = prefix(width);
+            code.insert(code.end(), immediate ? std::initializer_list<std::uint8_t>{0x0f, 0xba, 0xe0, 0xff, 0xc3} : std::initializer_list<std::uint8_t>{0x0f, 0xa3, 0xc8, 0xc3});
+            Fixture fixture(code);
+            for (const auto index : {0ull, 1ull, 15ull, 16ull, 31ull, 32ull, 63ull, 64ull, ~0ull}) {
+                fixture.Reset();
+                fixture.state.registers[0] = 0xa5f033ccdeadbeefu;
+                fixture.state.registers[1] = index;
+                const auto before = fixture.state;
+                const auto selected = (immediate ? 255 : index) & (width - 1);
+                const auto expected = (before.registers[0] >> selected) & 1;
+                fixture.Run();
+                require(fixture.state.registers[0] == before.registers[0] && fixture.state.registers[1] == before.registers[1], "BT modified a source register");
+                require(fixture.state.rflags == ((before.rflags & ~1ull) | expected), "BT changed ZF/undefined flags or selected the wrong bit");
+            }
+        }
+        auto code = prefix(width);
+        code.insert(code.end(), {0x0f, 0xa3, 0x08, 0xc3});
+        Fixture fixture(code);
+        std::array<std::uint8_t, 512> bytes{};
+        for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::uint8_t>(i * 73 + 41);
+        fixture.memory.Map(0x4000, bytes.size(), Read, std::as_bytes(std::span(bytes)));
+        for (const auto index : {-65, -64, -33, -32, -17, -16, -1, 0, 17, 31, 32, 63, 64, 127}) {
+            fixture.Reset();
+            fixture.state.registers[0] = 0x4080;
+            fixture.state.registers[1] = static_cast<std::uint64_t>(index);
+            const auto expected = (bytes[128 + (index + 128) / 8 - 16] >> (index & 7)) & 1;
+            const auto flags = fixture.state.rflags;
+            fixture.Run();
+            require(fixture.state.rflags == ((flags & ~1ull) | expected), "BT did not select a signed memory bit offset");
+        }
+        std::array<std::uint8_t, 512> after{};
+        require(fixture.memory.TryRead(0x4000, std::as_writable_bytes(std::span(after))) && after == bytes, "BT changed read-only memory");
+        auto immediateCode = prefix(width);
+        immediateCode.insert(immediateCode.end(), {0x0f, 0xba, 0x20, 0xff, 0xc3});
+        Fixture immediateMemory(immediateCode);
+        const auto highest = 1ull << (width - 1);
+        immediateMemory.memory.Map(0x5000, width / 8, Read, std::as_bytes(std::span(&highest, 1)).first(width / 8));
+        immediateMemory.state.registers[0] = 0x5000;
+        immediateMemory.Run();
+        require((immediateMemory.state.rflags & 1) != 0, "BT memory immediate did not ignore high index bits");
+    }
+    Fixture fault({0x0f, 0xa3, 0x08, 0xc3});
+    const std::array<std::uint8_t, 1> byte{1};
+    fault.memory.Map(0x5000, 1, Read, std::as_bytes(std::span(byte)));
+    fault.state.registers[0] = 0x5000;
+    fault.state.rflags &= ~1ull;
+    const auto flags = fault.state.rflags;
+    rejects([&] { fault.Run(); }, "memory read fault");
+    require(fault.state.rflags == flags, "BT memory fault changed flags");
+    Fixture extended({0x4d, 0x0f, 0xa3, 0xc8, 0xc3});
+    extended.state.registers[8] = 1ull << 63;
+    extended.state.registers[9] = 63;
+    extended.Run();
+    require((extended.state.rflags & 1) != 0 && extended.state.registers[8] == (1ull << 63), "BT ignored an extended register");
+    Fixture segmented({0x64, 0x67, 0x0f, 0xa3, 0x08, 0xc3});
+    const std::array<std::uint32_t, 1> bit{0x80000000u};
+    segmented.memory.Map(0x6000ull + 0xfffffffcu, 4, Read, std::as_bytes(std::span(bit)));
+    segmented.state.fsBase = 0x6000;
+    segmented.state.registers[0] = 0x100000000u;
+    segmented.state.registers[1] = UINT32_MAX;
+    segmented.Run();
+    require((segmented.state.rflags & 1) != 0, "BT did not wrap its 32-bit address before adding FS base");
+}
+
 void testShiftAndRotate() {
     for (const unsigned width : {8, 16, 32, 64}) for (const std::uint8_t extension : {0, 1, 4, 5, 7}) {
         auto code = prefix(width);
@@ -353,6 +420,7 @@ int main(int argc, char** argv) {
         testArithmeticWidths();
         testPartialRegistersAndExtensions();
         testMemoryWidthsAndSegments();
+        testBitTest();
         testShiftAndRotate();
         testMultiply();
         testConditionalWrites();

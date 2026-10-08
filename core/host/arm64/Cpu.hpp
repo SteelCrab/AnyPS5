@@ -45,6 +45,7 @@ public:
     Cpu(const Cpu&) = delete;
     Cpu& operator=(const Cpu&) = delete;
     std::uint64_t Run(CpuState& state, std::uint64_t instructionBudget = 1000000, std::stop_token stop = {});
+    void RunRemaining(CpuState& state, std::uint64_t& instructionBudget, std::stop_token stop = {});
     [[nodiscard]] std::uint64_t Invoke(const CpuState& caller, std::uint64_t address, std::array<std::uint64_t, 6> arguments = {});
     void Bind(std::uint64_t guestAddress, HostFunction function, void* context = nullptr);
     void SetObserver(void (*observer)(void*), void* context);

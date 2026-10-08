@@ -52,7 +52,7 @@ enum class Operation {
     Open, Close, Read, Write, Seek, Stat, Fstat, Mkdir, Unlink, Remove, Rename,
     OpenDir, CloseDir, ReadDir, Cwd, Timeval, Nanosleep, Sleep, Time, Clock,
     Getenv, Setenv, Unsetenv, Putenv, Strerror, Perror, Sysconf, Getargv, Getargc,
-    Strtok, StrtokR, Rand, Srand, Qsort, Bsearch
+    Strtok, StrtokR, Rand, Srand, Qsort, Bsearch, Random, Srandom
 };
 struct Export { std::string_view name; Operation operation; };
 const auto exports = std::to_array<Export>({
@@ -67,7 +67,8 @@ const auto exports = std::to_array<Export>({
     {"sysconf", Operation::Sysconf}, {"getargv", Operation::Getargv}, {"getargc", Operation::Getargc},
     {"strtok", Operation::Strtok}, {"strtok_r", Operation::StrtokR}, {"rand", Operation::Rand},
     {"srand", Operation::Srand},
-    {"qsort", Operation::Qsort}, {"bsearch", Operation::Bsearch}
+    {"qsort", Operation::Qsort}, {"bsearch", Operation::Bsearch},
+    {"random", Operation::Random}, {"srandom", Operation::Srandom}
 });
 
 std::uint64_t integer(std::int64_t value) { return static_cast<std::uint64_t>(value); }
@@ -179,7 +180,10 @@ struct NativePosix::Impl {
     std::uint64_t argv = 0;
     int argc = 0;
     std::uint32_t randomState = 1;
+    std::array<std::uint32_t, 31> bsdRandomState{};
+    std::size_t bsdRandomFront = 3, bsdRandomRear = 0;
     Impl(NativeLibc& libc) : libc(libc) {
+        seedRandom(1);
         for (char** variable = *_NSGetEnviron(); variable && *variable; ++variable) {
             const std::string entry(*variable);
             const auto separator = entry.find('=');
@@ -189,6 +193,27 @@ struct NativePosix::Impl {
     ~Impl() {
         for (const auto& [handle, directory] : directories) ::closedir(directory.native);
         for (const auto descriptor : descriptors) ::close(descriptor);
+    }
+    std::uint32_t random() {
+        auto& value = bsdRandomState[bsdRandomFront];
+        value += bsdRandomState[bsdRandomRear];
+        const auto result = value >> 1;
+        bsdRandomFront = (bsdRandomFront + 1) % bsdRandomState.size();
+        bsdRandomRear = (bsdRandomRear + 1) % bsdRandomState.size();
+        return result;
+    }
+    void seedRandom(std::uint32_t seed) {
+        bsdRandomState[0] = seed;
+        for (std::size_t i = 1; i < bsdRandomState.size(); ++i) {
+            auto previous = static_cast<std::int64_t>(std::bit_cast<std::int32_t>(bsdRandomState[i - 1]));
+            if (previous == 0) previous = 123459876;
+            auto next = 16807 * (previous % 127773) - 2836 * (previous / 127773);
+            if (next < 0) next += 0x7fffffff;
+            bsdRandomState[i] = static_cast<std::uint32_t>(next);
+        }
+        bsdRandomFront = 3;
+        bsdRandomRear = 0;
+        for (std::size_t i = 0; i < 10 * bsdRandomState.size(); ++i) static_cast<void>(random());
     }
     std::uint64_t fail(GuestMemory& memory, int error, std::uint64_t result = integer(-1)) {
         libc.SetError(memory, error);
@@ -547,6 +572,8 @@ std::uint64_t NativePosix::invoke(const HostCall& call, std::size_t operation) {
         return address + first;
     }
     case Operation::Srand: impl->randomState = static_cast<std::uint32_t>(args[0]); return 0;
+    case Operation::Srandom: impl->seedRandom(static_cast<std::uint32_t>(args[0])); return 0;
+    case Operation::Random: return impl->random();
     case Operation::Rand: {
         const auto x = static_cast<std::int64_t>(impl->randomState % 0x7ffffffeu) + 1;
         auto next = 16807 * (x % 127773) - 2836 * (x / 127773);

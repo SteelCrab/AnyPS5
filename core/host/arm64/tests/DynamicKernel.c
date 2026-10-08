@@ -26,6 +26,8 @@ extern char* getenv(const char* name);
 extern int unsetenv(const char* name);
 extern char* getcwd(char* output, unsigned long size);
 extern long sysconf(int name);
+extern long random(void);
+extern void srandom(unsigned int seed);
 extern char* setlocale(int category, const char* name);
 extern unsigned long mbrtowc(unsigned int* output, const char* input, unsigned long count, void* state);
 extern int __mb_cur_max;
@@ -83,6 +85,10 @@ int Posix(void) {
     unsigned int character = 0;
     if (mbrtowc(&character, "\xe2", 1, state) != (unsigned long)-2 || mbrtowc(&character, "\x82\xac", 2, state) != 2 || character != 0x20ac) return 25;
     if (sscanf("\xf0\x9f\x99\x82", "%lc", &character) != 1 || character != 0x1f642) return 26;
+    srandom(0);
+    if (random() != 577655601 || random() != 1248161417) return 27;
+    srandom(123);
+    if (random() != 128959393 || random() != 1692901013) return 28;
     return 0;
 }
 

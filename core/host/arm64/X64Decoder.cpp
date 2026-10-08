@@ -9,7 +9,7 @@ bool Instruction::TerminatesBlock() const {
     if (operation == Operation::Jump || operation == Operation::ConditionalJump ||
         operation == Operation::Call || operation == Operation::Return || operation == Operation::Push) return true;
     return destination.kind == OperandKind::Memory && operation != Operation::Compare &&
-           operation != Operation::Test && operation != Operation::Lea;
+           operation != Operation::Test && operation != Operation::BitTest && operation != Operation::Lea;
 }
 
 namespace {
@@ -264,7 +264,14 @@ Instruction Decode(std::span<const std::uint8_t> code, std::uint64_t address) {
         if (prefix.repeat != 0 && !scalarMove && !vectorQuadMove && !(prefix.repeat == 0xf3 && !prefix.word && (extension == 0x6f || extension == 0x7f))) {
             throw std::runtime_error("SSE mandatory prefix or REP instruction is not implemented");
         }
-        if (vectorQuadMove) {
+        if (extension == 0xa3 || extension == 0xba) {
+            const auto group = modOperands();
+            if (extension == 0xba) {
+                if (group != 4) throw std::runtime_error("Bit modification instruction translation is not implemented");
+                result.source = immediate(reader.Unsigned(1));
+            }
+            result.operation = Operation::BitTest;
+        } else if (vectorQuadMove) {
             result.width = 64;
             modOperands(64, 128);
             if (extension == 0x7e) std::swap(result.destination, result.source);

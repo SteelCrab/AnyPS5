@@ -86,12 +86,23 @@ signed zero, NaNs, domain/range errno and preservation of the host floating envi
 boundary, scanf integer/floating widths, suppression, character sets, wide strings, va_list
 exhaustion and retained file input. `arm64_posix` checks real file I/O, stat/dirent layouts,
 closed/reused FILE descriptors, isolated standard descriptors/environment, arguments, clocks,
-tokenization, guest comparator callbacks and cancelled sleep waits. `arm64_locale` checks
+tokenization, guest comparator callbacks, FreeBSD random sequences and cancelled sleep waits. `arm64_locale` checks
 locale isolation, incremental UTF-8, mapping-edge conversion, invalid encodings, non-BMP
 characters, bounded wide strings, formatted wide output, collation and broken-down time.
 
+`arm64_process` checks per-DSO/LIFO cleanup, concurrent one-time finalization, immediate exits,
+callback registration during cleanup and retained instruction budgets on failure.
+`arm64_process_kernel` executes compiled x86-64 O0/O2/O3 termination callbacks and ELF finalizers,
+checks buffered output and status codes, and wakes a blocked main thread when a worker exits.
+`arm64_system` checks native CPU/memory queries, guest MIB translation, lengths, partial copies
+and invalid pointers. `arm64_audio` checks native mono/stereo S16/F32 playback, drain/restart,
+sample-rate conversion, invalid PCM mappings and shutdown cancellation. `arm64_audio_kernel`
+executes compiled x86-64 O0/O2/O3 PCM calls through Core Audio. These two tests output silence,
+require a native audio device and have the `audio` label.
+
 `arm64_integer` checks narrow registers, arithmetic flags, shifts, rotates, conditional writes,
-stack faults and segmented addresses. `arm64_wide_integer` compares MUL/IMUL/DIV/IDIV with
+stack faults, segmented addresses and BT register/memory indices, negative offsets and fault
+flags. `arm64_wide_integer` compares MUL/IMUL/DIV/IDIV with
 an arbitrary-precision reference. `arm64_vector` compares native SSE/SSE2-to-NEON operations
 with scalar lanes and checks vector memory faults, scalar moves and XMM MOVQ.
 `arm64_compiled_kernel` builds the same C source for native ARM64 and x86-64 ELF at O0/O2/O3,

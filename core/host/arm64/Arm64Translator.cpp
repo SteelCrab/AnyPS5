@@ -41,6 +41,27 @@ void writeMemory(CpuState* state, std::uint64_t address, std::uint64_t value, st
     }
 }
 
+void bitTest(CpuState* state, std::uint64_t value, std::uint64_t index, std::uint64_t width) noexcept {
+    const auto bit = (value >> (index & (width - 1))) & 1;
+    state->rflags = (state->rflags & ~Carry) | bit;
+}
+
+void bitTestMemory(CpuState* state, std::uint64_t address, std::uint64_t index, std::uint64_t mode) noexcept {
+    const auto width = mode & 0xffu;
+    if ((mode & 0x100u) != 0) {
+        const auto offset = std::bit_cast<std::int64_t>(signExtend(state, index, width));
+        auto word = offset / static_cast<std::int64_t>(width);
+        if (offset < 0 && offset % static_cast<std::int64_t>(width) != 0) --word;
+        const auto segment = static_cast<Segment>(mode >> 10);
+        const auto base = segment == Segment::Fs ? state->fsBase : segment == Segment::Gs ? state->gsBase : 0;
+        address = address - base + static_cast<std::uint64_t>(word * static_cast<std::int64_t>(width / 8));
+        if ((mode & 0x200u) != 0) address = static_cast<std::uint32_t>(address);
+        address += base;
+    }
+    const auto value = readMemory(state, address, width / 8);
+    if (state->fault == 0) bitTest(state, value, index, width);
+}
+
 void readVector(CpuState* state, std::uint64_t address, std::uint64_t slot, std::uint64_t aligned) noexcept {
     if (aligned && (address & 15) != 0) state->fault = 5;
     else if (!state->memory->TryRead(address, state->vectorScratch[slot])) state->fault = 1;
@@ -359,6 +380,22 @@ public:
         case Operation::Lea:
             Address(instruction.source, 20, next, false);
             Write(instruction.destination, 20, instruction.width, next);
+            break;
+        case Operation::BitTest:
+            Read(instruction.source, 20, instruction.width, next);
+            if (instruction.destination.kind == OperandKind::Memory) {
+                Address(instruction.destination, 1, next);
+                Move(2, 20);
+                Constant(3, instruction.width | (instruction.source.kind == OperandKind::Register ? 0x100u : 0) |
+                    (instruction.destination.address32 ? 0x200u : 0) | (static_cast<std::uint64_t>(instruction.destination.segment) << 10));
+                Call(bitTestMemory);
+                faultGuard();
+            } else {
+                Read(instruction.destination, 1, instruction.width, next);
+                Move(2, 20);
+                Constant(3, instruction.width);
+                Call(bitTest);
+            }
             break;
         case Operation::Add:
         case Operation::AddCarry:

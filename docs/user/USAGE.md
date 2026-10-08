@@ -109,8 +109,9 @@ On macOS, `--autorun` fails before conversion or output creation.
 An experimental ARM64 CPU runner accepts static or dynamic ELF64 x86-64 images with a callable
 entry function. It maps load segments and a private stack, applies supported relocations,
 resolves available native imports, and executes translated ARM64 blocks in the native process.
-It runs initialization functions before the entry and finalization functions after a normal
-return. A return to the zero sentinel prints RAX. Linux/PS5 process startup, payload arguments,
+It runs initialization functions before the entry and termination callbacks/finalizers after
+a normal return or exit. A return to the zero sentinel prints RAX. Guest exit/_Exit/_exit
+return their low eight status bits as the runner status; abort returns 134. Linux/PS5 process startup, payload arguments,
 syscalls and most game system imports remain unavailable.
 
 ```sh
@@ -127,10 +128,12 @@ startup structure. Common register, immediate and
 ModRM forms are supported in the current CPU subset:
 8/16/32/64-bit MOV, register XCHG, ADD, ADC, SUB, SBB, AND, OR, XOR, CMP, TEST, INC, DEC,
 NEG, NOT, SHL, SHR, SAR, ROL and ROR; MOVSX/MOVZX/MOVSXD, accumulator sign extension,
-MUL/IMUL/DIV/IDIV, LEA, CMOVcc, SETcc, 16/64-bit PUSH/POP, direct and indirect JMP/CALL,
+MUL/IMUL/DIV/IDIV, BT, LEA, CMOVcc, SETcc, 16/64-bit PUSH/POP, direct and indirect JMP/CALL,
 all 16 Jcc conditions, 64-bit RET and NOP. Memory operands support base/index/scale,
 signed displacements, RIP/EIP-relative addressing, 32-bit address truncation and configured
 FS/GS bases. Divide by zero and quotient overflow stop before register writeback.
+BT supports 16/32/64-bit register/immediate indices and signed memory bit offsets. It preserves
+ZF and undefined flags; memory faults occur before changing CF.
 
 The SSE/SSE2 subset uses ARM64 NEON: MOVUPS/MOVUPD/MOVAPS/MOVAPD, MOVDQA/MOVDQU,
 MOVSS/MOVSD, XMM MOVQ, scalar-register MOVD/MOVQ transfers, packed bitwise operations, PADDB/W/D/Q, PSUBB/W/D/Q,
@@ -161,6 +164,20 @@ The environment is private to the guest; putenv retains the guest buffer's live 
 Sleep waits stop during runtime teardown. Blocking descriptor/FILE I/O remains non-cancellable.
 Unsupported open flags and sysconf identifiers return errors.
 
+The process bridge runs atexit and __cxa_atexit callbacks in reverse registration order.
+__cxa_finalize selects a DSO or all callbacks and does not repeat completed callbacks.
+Normal cleanup runs ELF finalizers and flushes guest output. Immediate exit and default abort
+discard buffered output. Worker exit wakes runtime waits. Guest signal handlers remain absent.
+random/srandom use private FreeBSD 9 default-generator state independently of rand/srand.
+The read-only sysctl bridge translates guest MIBs for implemented CPU/memory/machine queries
+and returns actual Darwin values. Unknown nodes and write requests return errors.
+
+Four native AudioOut functions initialize Core Audio, open a port, submit PCM and close it.
+Main/BGM output index zero supports S16/F32 mono/stereo with option zero. Core Audio converts
+sample rates for the current output device. Null output drains queued playback. Guest buffers
+are copied before reuse, and runtime teardown cancels waits. Unsupported port routes, surround
+formats and option flags stop explicitly. This component support does not establish game playback.
+
 The locale bridge starts in C and uses a private native locale. Host-supported locale names
 can be selected without changing the host process locale. Empty locale selection reads the
 guest's LC_ALL, category and LANG variables. It supports incremental UTF-8, 32-bit wide
@@ -181,11 +198,12 @@ accepts the main output with null open parameters, linear uncompressed BGRA8, op
 matching buffer-group dimensions and VSYNC mode 1. It supports registration, rate control,
 flip, completion events and close. Kernel direct memory supports shared aliases and partial
 release. Event queues support blocking, timed and polling waits. Missing payload startup,
-input/audio and other system bindings still prevent the supplied homebrew games from starting. Component tests verify
+input and other system bindings still prevent the supplied homebrew games from starting. Component tests verify
 the displayed drawable; they do not establish game compatibility.
 
 CPU runner exit codes are `0` for a completed guest return, `1` for usage, and `2` for loading,
-translation, memory, callback or budget failure. The printed guest return value is separate
+translation, memory, callback or budget failure. Explicit guest termination returns the guest
+exit status; abort returns 134. The printed value from a normal guest return is separate
 from the runner's exit code.
 
 The ARM64 Metal shader tool translates SPIR-V to MSL and compiles it on the Apple GPU:

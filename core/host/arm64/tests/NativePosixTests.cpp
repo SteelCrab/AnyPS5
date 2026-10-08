@@ -197,6 +197,30 @@ void testGuestComparators() {
     require(exhausted && fixture.Value<std::array<std::int32_t, 5>>(0x1000) == values, "Guest sort bypassed its CPU budget or partially wrote on failure");
 }
 
+void testBsdRandom() {
+    Fixture fixture;
+    struct Sequence { std::uint32_t seed; std::array<std::uint32_t, 8> values; };
+    const auto sequences = std::to_array<Sequence>({
+        {1, {1804289383, 846930886, 1681692777, 1714636915, 1957747793, 424238335, 719885386, 1649760492}},
+        {0, {577655601, 1248161417, 192959563, 143633695, 541917479, 1903093295, 725992962, 153633432}},
+        {123, {128959393, 1692901013, 436085873, 748533630, 776550279, 289134331, 807385195, 556889022}},
+        {0x80000000u, {1336741213, 1210407648, 1447044896, 337392383, 82502902, 538660432, 1313908778, 370221063}},
+        {0xffffffffu, {254925627, 1205188300, 366127624, 1401405153, 76053476, 1604170158, 1302235366, 362229243}}
+    });
+    require(fixture.Call("random") == sequences[0].values[0], "Default BSD random state does not use seed one");
+    for (const auto& sequence : sequences) {
+        fixture.Call("srandom", {sequence.seed});
+        for (const auto expected : sequence.values) require(fixture.Call("random") == expected, "BSD random sequence differs from FreeBSD 9");
+    }
+    fixture.Call("srand", {42});
+    const auto first = fixture.Call("rand");
+    fixture.Call("srand", {42});
+    fixture.Call("srandom", {123});
+    require(fixture.Call("rand") == first && fixture.Call("random") == sequences[2].values[0], "rand and random share state");
+    Fixture other;
+    require(other.Call("random") == sequences[0].values[0], "Separate guest processes share BSD random state");
+}
+
 void testSleepCancellation() {
     Fixture fixture;
     std::atomic<bool> started = false, stopped = false;
@@ -218,6 +242,6 @@ void testSleepCancellation() {
 }
 
 int main() {
-    try { testFiles(); testStreamDescriptorOwnership(); testEnvironmentAndArguments(); testTimeAndTokens(); testGuestComparators(); testSleepCancellation(); std::puts("Guest POSIX file/directory ABI, descriptor ownership, environment, arguments, clocks, nested comparators and stopped waits passed"); return 0; }
+    try { testFiles(); testStreamDescriptorOwnership(); testEnvironmentAndArguments(); testTimeAndTokens(); testGuestComparators(); testBsdRandom(); testSleepCancellation(); std::puts("Guest POSIX files, environment, clocks, comparators, BSD random sequences and stopped waits passed"); return 0; }
     catch (const std::exception& error) { std::fprintf(stderr, "%s\n", error.what()); return 1; }
 }

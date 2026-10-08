@@ -7,7 +7,7 @@ namespace AnyPS5::Arm64 {
 
 enum class Operation : std::uint8_t {
     Move, MoveSigned, SignHigh, Lea, Exchange, Add, AddCarry, Subtract, SubtractBorrow,
-    And, Or, Xor, Compare, Test, Increment, Decrement, Negate, Not,
+    And, Or, Xor, Compare, Test, BitTest, Increment, Decrement, Negate, Not,
     ShiftLeft, ShiftRight, ShiftArithmetic, RotateLeft, RotateRight,
     Multiply, MultiplyImmediate, MultiplyUnsignedWide, MultiplySignedWide, DivideUnsigned, DivideSigned,
     ConditionalMove, SetCondition,

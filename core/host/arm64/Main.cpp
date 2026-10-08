@@ -6,9 +6,13 @@
 #include "NativeMath.hpp"
 #include "NativePosix.hpp"
 #include "NativeLocale.hpp"
+#include "NativeProcess.hpp"
+#include "NativeSystem.hpp"
+#include "NativeAudio.hpp"
 #include <charconv>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -39,6 +43,9 @@ int main(int argc, char** argv) {
         AnyPS5::Arm64::NativeMath math(libc);
         AnyPS5::Arm64::NativePosix posix(libc);
         AnyPS5::Arm64::NativeLocale locale(libc, posix);
+        AnyPS5::Arm64::NativeProcess process(libc);
+        AnyPS5::Arm64::NativeSystem system(libc);
+        AnyPS5::Arm64::NativeAudio audio;
         AnyPS5::Arm64::NativeKernel kernel;
         AnyPS5::Arm64::NativeVideoOut video(kernel);
         AnyPS5::Arm64::ElfOptions options;
@@ -53,6 +60,12 @@ int main(int argc, char** argv) {
             if (posixResolved != 0) return posixResolved;
             const auto localeResolved = AnyPS5::Arm64::NativeLocale::Resolve(symbol);
             if (localeResolved != 0) return localeResolved;
+            const auto processResolved = AnyPS5::Arm64::NativeProcess::Resolve(symbol);
+            if (processResolved != 0) return processResolved;
+            const auto systemResolved = AnyPS5::Arm64::NativeSystem::Resolve(symbol);
+            if (systemResolved != 0) return systemResolved;
+            const auto audioResolved = AnyPS5::Arm64::NativeAudio::Resolve(symbol);
+            if (audioResolved != 0) return audioResolved;
             const auto kernelResolved = kernel.Resolve(symbol);
             return kernelResolved != 0 ? kernelResolved : video.Resolve(symbol);
         };
@@ -71,8 +84,12 @@ int main(int argc, char** argv) {
         kernel.Bind(cpu);
         video.Bind(cpu);
         math.Bind(cpu);
+        process.SetFinalizers(image.finalizers);
+        process.Bind(cpu);
+        system.Bind(cpu);
+        audio.Bind(cpu);
         AnyPS5::Arm64::NativeThreads threads(libc, image.memory, budget);
-        threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); math.Bind(threadCpu); posix.Bind(threadCpu); locale.Bind(threadCpu, image.memory); }, [&] { kernel.Shutdown(); posix.Shutdown(); });
+        threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); math.Bind(threadCpu); posix.Bind(threadCpu); locale.Bind(threadCpu, image.memory); process.Bind(threadCpu); system.Bind(threadCpu); audio.Bind(threadCpu); }, [&] { kernel.Shutdown(); posix.Shutdown(); audio.Shutdown(); });
         threads.Bind(cpu);
         const auto initialBudget = budget;
         const auto run = [&](std::uint64_t address) {
@@ -81,17 +98,29 @@ int main(int argc, char** argv) {
             state.registers[4] = stack + stackSize - 8;
             const std::uint64_t sentinel = 0;
             if (!image.memory.TryWrite(state.registers[4], std::as_bytes(std::span(&sentinel, 1)))) throw std::runtime_error("Cannot initialize guest return sentinel");
-            budget -= cpu.Run(state, budget);
+            cpu.RunRemaining(state, budget);
         };
-        for (const auto initializer : image.initializers) {
-            run(initializer);
+        std::uint64_t result = 0;
+        std::exception_ptr failure;
+        bool interrupted = false;
+        try {
+            for (const auto initializer : image.initializers) run(initializer);
+            run(image.entry);
+            result = state.registers[0];
+            run(AnyPS5::Arm64::NativeProcess::CompletionAddress());
+        } catch (const AnyPS5::Arm64::ExecutionStopped&) {
+            interrupted = true;
+            failure = std::current_exception();
+        } catch (...) { failure = std::current_exception(); }
+        try { threads.Finish(); }
+        catch (...) { if (!failure || interrupted) failure = std::current_exception(); }
+        try {
+            if (failure) std::rethrow_exception(failure);
+        } catch (const AnyPS5::Arm64::GuestExit& exit) {
+            std::printf("Native ARM64 execution: guest %s with status %d, %zu translated blocks, %llu instructions\n",
+                exit.Aborted() ? "aborted" : "exited", exit.Status(), cpu.CompiledBlocks(), static_cast<unsigned long long>(initialBudget - budget));
+            return exit.Status();
         }
-        run(image.entry);
-        const auto result = state.registers[0];
-        for (const auto finalizer : image.finalizers) {
-            run(finalizer);
-        }
-        threads.Finish();
         std::printf("Native ARM64 execution: guest returned 0x%llx, %zu translated blocks, %llu instructions\n",
             static_cast<unsigned long long>(result), cpu.CompiledBlocks(), static_cast<unsigned long long>(initialBudget - budget));
         return 0;
