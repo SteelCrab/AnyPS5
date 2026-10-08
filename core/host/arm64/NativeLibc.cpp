@@ -380,7 +380,7 @@ const auto functions = std::to_array<Function>({
         if (result == EOF) static_cast<NativeLibc*>(context)->SetError(call.memory, errno);
         return integer(result);
     }},
-    {"__error", +[](const HostCall&, void*) { return globalBase; }}
+    {"__error", +[](const HostCall& call, void* context) { return static_cast<NativeLibc*>(context)->ErrorAddress(call.memory); }}
 });
 
 }
@@ -398,6 +398,7 @@ std::uint64_t NativeLibc::Resolve(const ElfImport& symbol) const {
 }
 
 void NativeLibc::Bind(Cpu& cpu, GuestMemory& memory) {
+    std::lock_guard lock(mutex);
     if (bound) throw std::runtime_error("Native libc was already bound");
     memory.Map(globalBase, 0x1000, Read | Write);
     const std::array<std::FILE*, 3> standard{stdin, stdout, stderr};
@@ -407,11 +408,48 @@ void NativeLibc::Bind(Cpu& cpu, GuestMemory& memory) {
         writeBytes(memory, globalBase + 16 + i * 8, std::as_bytes(std::span(&address, 1)));
         SyncFile(memory, address);
     }
-    for (std::size_t i = 0; i < functions.size(); ++i) cpu.Bind(functionBase + i * 16, functions[i].function, this);
+    guestMemory = &memory;
+    errorCells.emplace(std::this_thread::get_id(), globalBase);
     bound = true;
+    Attach(cpu, memory);
+}
+
+void NativeLibc::Attach(Cpu& cpu, GuestMemory& memory) {
+    std::lock_guard lock(mutex);
+    if (!bound || guestMemory != &memory) throw std::runtime_error("Native libc attachment requires its initialized guest memory");
+    const auto address = ErrorAddress(memory);
+    const int zero = 0;
+    writeBytes(memory, address, std::as_bytes(std::span(&zero, 1)));
+    const int threaded = errorCells.size() > 1;
+    writeBytes(memory, globalBase + 8, std::as_bytes(std::span(&threaded, 1)));
+    [&]<std::size_t... TIndex>(std::index_sequence<TIndex...>) {
+        (cpu.Bind(functionBase + TIndex * 16, +[](const HostCall& call, void* context) {
+            return static_cast<NativeLibc*>(context)->Invoke(call, functions[TIndex].function);
+        }, this), ...);
+    }(std::make_index_sequence<functions.size()>{});
+}
+
+std::uint64_t NativeLibc::Invoke(const HostCall& call, HostFunction function) {
+    std::lock_guard lock(mutex);
+    return function(call, this);
+}
+
+std::uint64_t NativeLibc::ErrorAddress(GuestMemory& memory) const {
+    std::lock_guard lock(mutex);
+    if (guestMemory != &memory) throw std::runtime_error("Native libc errno requires its initialized guest memory");
+    const auto id = std::this_thread::get_id();
+    const auto found = errorCells.find(id);
+    if (found != errorCells.end()) return found->second;
+    const auto address = nextError;
+    memory.Map(address, 0x1000, Read | Write);
+    try { errorCells.emplace(id, address); }
+    catch (...) { memory.Unmap(address); throw; }
+    nextError += 0x1000;
+    return address;
 }
 
 std::uint64_t NativeLibc::Allocate(GuestMemory& memory, std::size_t size) {
+    std::lock_guard lock(mutex);
     const auto mapped = std::max<std::size_t>(size, 1);
     constexpr std::uint64_t heapEnd = 0x700000000000;
     if (nextAllocation > heapEnd - 16 || mapped > heapEnd - nextAllocation - 16) { SetError(memory, 12); return 0; }
@@ -425,6 +463,7 @@ std::uint64_t NativeLibc::Allocate(GuestMemory& memory, std::size_t size) {
 }
 
 void NativeLibc::Free(GuestMemory& memory, std::uint64_t address) {
+    std::lock_guard lock(mutex);
     if (address == 0) return;
     const auto found = allocations.find(address);
     if (found == allocations.end()) throw std::runtime_error("Native libc free requires a live guest allocation");
@@ -433,6 +472,7 @@ void NativeLibc::Free(GuestMemory& memory, std::uint64_t address) {
 }
 
 std::uint64_t NativeLibc::Resize(GuestMemory& memory, std::uint64_t address, std::size_t size) {
+    std::lock_guard lock(mutex);
     if (address == 0) return Allocate(memory, size);
     const auto found = allocations.find(address);
     if (found == allocations.end()) throw std::runtime_error("Native libc realloc requires a live guest allocation");
@@ -447,7 +487,9 @@ std::uint64_t NativeLibc::Resize(GuestMemory& memory, std::uint64_t address, std
 }
 
 void NativeLibc::SetError(GuestMemory& memory, int error) const {
-    writeBytes(memory, globalBase, std::as_bytes(std::span(&error, 1)));
+    std::lock_guard lock(mutex);
+    const auto address = ErrorAddress(memory);
+    writeBytes(memory, address, std::as_bytes(std::span(&error, 1)));
 }
 
 NativeLibc::~NativeLibc() {
@@ -457,6 +499,7 @@ NativeLibc::~NativeLibc() {
 }
 
 std::uint64_t NativeLibc::Open(GuestMemory& memory, const char* path, const char* mode) {
+    std::lock_guard lock(mutex);
     auto* file = std::fopen(path, mode);
     if (!file) { SetError(memory, errno); return 0; }
     const auto address = nextStream;
@@ -476,6 +519,7 @@ std::uint64_t NativeLibc::Open(GuestMemory& memory, const char* path, const char
 }
 
 int NativeLibc::Close(GuestMemory& memory, std::uint64_t address) {
+    std::lock_guard lock(mutex);
     const auto found = streams.find(address);
     if (found == streams.end()) throw std::runtime_error("Native libc FILE handle is invalid");
     const auto result = std::fclose(found->second.file);
@@ -486,12 +530,14 @@ int NativeLibc::Close(GuestMemory& memory, std::uint64_t address) {
 }
 
 std::FILE* NativeLibc::File(std::uint64_t address) const {
+    std::lock_guard lock(mutex);
     const auto found = streams.find(address);
     if (found == streams.end()) throw std::runtime_error("Native libc FILE handle is invalid");
     return found->second.file;
 }
 
 void NativeLibc::SyncFile(GuestMemory& memory, std::uint64_t address) const {
+    std::lock_guard lock(mutex);
     auto* file = File(address);
     const std::int32_t count = 0;
     const auto flags = static_cast<std::uint16_t>(0x12 | (std::feof(file) ? 0x20 : 0) | (std::ferror(file) ? 0x40 : 0));

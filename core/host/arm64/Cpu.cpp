@@ -62,6 +62,10 @@ struct Cpu::Impl {
         void* context;
     };
     std::unordered_map<std::uint64_t, Binding> functions;
+    std::uint64_t* remaining = nullptr;
+    std::stop_token stop;
+    void (*observer)(void*) = nullptr;
+    void* observerContext = nullptr;
     explicit Impl(GuestMemory& memory) : memory(memory) {}
 };
 
@@ -74,14 +78,25 @@ void Cpu::Bind(std::uint64_t guestAddress, HostFunction function, void* context)
     if (!impl->functions.emplace(guestAddress, Impl::Binding{function, context}).second) throw std::runtime_error("Native guest function binding is duplicated");
 }
 
-std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
+std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget, std::stop_token stop) {
+    struct Scope {
+        Impl& impl;
+        std::uint64_t* previous;
+        std::stop_token previousStop;
+        ~Scope() { impl.remaining = previous; impl.stop = previousStop; }
+    } scope{*impl, impl->remaining, impl->stop};
+    impl->remaining = &instructionBudget;
+    impl->stop = stop;
     const auto initialBudget = instructionBudget;
     state.memory = &impl->memory;
     state.fault = 0;
     while (state.rip != 0) {
-        if (impl->codeVersion != impl->memory.CodeVersion()) {
+        if (stop.stop_requested()) throw ExecutionStopped();
+        if (impl->observer) impl->observer(impl->observerContext);
+        const auto codeVersion = impl->memory.CodeVersion();
+        if (impl->codeVersion != codeVersion) {
             impl->blocks.clear();
-            impl->codeVersion = impl->memory.CodeVersion();
+            impl->codeVersion = codeVersion;
         }
         if (instructionBudget == 0) throw std::runtime_error("ARM64 guest instruction budget exceeded");
         const auto function = impl->functions.find(state.rip);
@@ -93,6 +108,7 @@ std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
             }
             const HostCall call{{state.registers[7], state.registers[6], state.registers[2], state.registers[1], state.registers[8], state.registers[9]},
                                 state.registers[4] + 8, impl->memory, state, *this};
+            --instructionBudget;
             const auto result = function->second.function(call, function->second.context);
             if (!impl->memory.TryRead(state.registers[4], std::as_writable_bytes(std::span(&next, 1)))) {
                 throw std::runtime_error("Native guest function return address became unreadable");
@@ -100,7 +116,6 @@ std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
             state.registers[0] = result;
             state.registers[4] += 8;
             state.rip = next;
-            --instructionBudget;
             continue;
         }
         auto block = impl->blocks.find(state.rip);
@@ -129,6 +144,26 @@ std::uint64_t Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
     return initialBudget - instructionBudget;
 }
 
+std::uint64_t Cpu::Invoke(const CpuState& caller, std::uint64_t address, std::array<std::uint64_t, 6> arguments) {
+    if (!impl->remaining || address == 0 || caller.registers[4] < 16) throw std::runtime_error("Invalid nested native guest invocation");
+    CpuState nested = caller;
+    nested.rip = address;
+    nested.registers[4] -= 16;
+    const std::uint64_t sentinel = 0;
+    if (!impl->memory.TryWrite(nested.registers[4], std::as_bytes(std::span(&sentinel, 1)))) throw std::runtime_error("Nested native guest stack is outside writable memory");
+    const std::array<std::uint8_t, 6> registers{7, 6, 2, 1, 8, 9};
+    for (std::size_t i = 0; i < arguments.size(); ++i) nested.registers[registers[i]] = arguments[i];
+    auto* remaining = impl->remaining;
+    const auto consumed = Run(nested, *remaining, impl->stop);
+    *remaining -= consumed;
+    return nested.registers[0];
+}
+
 std::size_t Cpu::CompiledBlocks() const { return impl->blocks.size(); }
+
+void Cpu::SetObserver(void (*observer)(void*), void* context) {
+    impl->observer = observer;
+    impl->observerContext = context;
+}
 
 }

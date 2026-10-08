@@ -105,12 +105,20 @@ const auto functions = std::to_array<Function>({
     {"sceVideoOutSetFlipRate", +[](const HostCall& call, void* context) -> std::uint64_t {
         static_cast<NativeVideoOut*>(context)->SetRate(static_cast<int>(call.arguments[0]), static_cast<int>(call.arguments[1]));
         return 0;
+    }},
+    {"sceVideoOutAddFlipEvent", +[](const HostCall& call, void* context) -> std::uint64_t {
+        return static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<NativeVideoOut*>(context)->AddFlipEvent(call.arguments[0], static_cast<int>(call.arguments[1]), call.arguments[2])));
+    }},
+    {"sceVideoOutDeleteFlipEvent", +[](const HostCall& call, void* context) -> std::uint64_t {
+        return static_cast<std::uint64_t>(static_cast<std::int64_t>(static_cast<NativeVideoOut*>(context)->DeleteFlipEvent(call.arguments[0], static_cast<int>(call.arguments[1]))));
     }}
 });
 
 }
 
 struct NativeVideoOut::Impl {
+    NativeKernel& kernel;
+    explicit Impl(NativeKernel& kernel) : kernel(kernel) {}
     struct Slot {
         Buffer buffer{};
         int group = -1;
@@ -135,7 +143,7 @@ struct NativeVideoOut::Impl {
     }
 };
 
-NativeVideoOut::NativeVideoOut() : impl(std::make_unique<Impl>()) {}
+NativeVideoOut::NativeVideoOut(NativeKernel& kernel) : impl(std::make_unique<Impl>(kernel)) {}
 NativeVideoOut::~NativeVideoOut() = default;
 
 std::uint64_t NativeVideoOut::Resolve(const ElfImport& symbol) const {
@@ -162,6 +170,7 @@ int NativeVideoOut::Close(int handle) {
     const auto found = impl->outputs.find(handle);
     if (found == impl->outputs.end()) return invalidHandle;
     if (found->second.presenter) found->second.presenter->Close();
+    impl->kernel.CloseOutput(handle);
     impl->outputs.erase(found);
     return 0;
 }
@@ -211,6 +220,7 @@ void NativeVideoOut::Flip(GuestMemory& memory, int handle, int index, int mode, 
     if (!output.presenter->Present(pixels, rowBytes(attribute), Metal::FrameFormat::Bgra8)) throw std::runtime_error("Metal VideoOut window was closed");
     ++output.flips;
     output.argument = argument;
+    impl->kernel.TriggerFlip(handle, argument);
     output.nextFlip = std::max(output.nextFlip + std::chrono::nanoseconds((1000000000ll * (output.rate + 1)) / 60), std::chrono::steady_clock::now());
 }
 
@@ -218,6 +228,16 @@ void NativeVideoOut::SetRate(int handle, int rate) {
     auto& output = impl->output(handle);
     if (rate < 0 || rate > 2) throw std::runtime_error("Metal VideoOut flip rate is invalid");
     output.rate = rate;
+}
+
+int NativeVideoOut::AddFlipEvent(std::uint64_t queue, int handle, std::uint64_t userData) {
+    impl->output(handle);
+    return impl->kernel.AddFlip(queue, handle, userData);
+}
+
+int NativeVideoOut::DeleteFlipEvent(std::uint64_t queue, int handle) {
+    impl->output(handle);
+    return impl->kernel.DeleteFlip(queue, handle);
 }
 
 std::vector<std::byte> NativeVideoOut::Readback(int handle) const {

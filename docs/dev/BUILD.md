@@ -73,6 +73,14 @@ and variadic formatting. `arm64_metal` checks an
 x86-64 guest calls through the ARM64 callback bridge to Metal compute and RDNA rendering,
 with results read back by the guest. It requires GPU access and has the `gpu` label.
 
+`arm64_kernel` checks shared direct-memory aliases, permissions, partial releases, code
+invalidation, event polling, timeouts and concurrent wait/close behavior. `arm64_threads`
+checks mutex ownership, recursion, condition deadlines, reader/writer locks, semaphore
+errors and nested callback instruction budgets. `arm64_thread_kernel` compiles x86-64 C
+at O0/O2/O3 and executes four workers with shared heap access, once initialization, thread
+keys/destructors, separate errno cells, a condition barrier and semaphores. It also checks
+joined/detached worker failure propagation and process teardown with a blocked detached worker.
+
 `arm64_integer` checks narrow registers, arithmetic flags, shifts, rotates, conditional writes,
 stack faults and segmented addresses. `arm64_wide_integer` compares MUL/IMUL/DIV/IDIV with
 an arbitrary-precision reference. `arm64_vector` compares native SSE/SSE2-to-NEON operations
@@ -86,7 +94,8 @@ initialization, native libc calls, floating returns, compiler-generated va_list 
 instruction budgets at O0/O2/O3. LLD is only a test build tool; the runtime does not link to it.
 
 `arm64_video` runs x86-64 instructions through the ARM64 native VideoOut bridge and verifies
-pixels from the actual Metal window drawable. It requires GPU and desktop access and has the
+pixels from the actual Metal window drawable and its completion event using kernel direct
+memory. It requires GPU and desktop access and has the
 `gpu` label. This test uses a generated framebuffer, not a supplied game.
 
 CPU executables are ad-hoc signed with hardened runtime and the

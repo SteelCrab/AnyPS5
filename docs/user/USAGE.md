@@ -147,11 +147,17 @@ character classification, integer and float/double parsing, basic stdio, and com
 formats. x86-64 va_list is decoded independently of the ARM64 host ABI. Positional and
 extended floating-point formats are unsupported. This remains a partial system-library ABI.
 
-Six VideoOut exports connect guest framebuffers to a native AppKit/Metal window. This path
+Native thread calls run each worker with its own ARM64 CPU, stack and instruction budget.
+Mutexes, conditions, reader/writer locks, thread keys, once initialization and process-private
+semaphores are implemented. Worker execution faults also stop the main CPU. Scheduling,
+signal masks, cancellation, shared-process synchronization and ELF TLS remain unsupported.
+
+Eight VideoOut exports connect guest framebuffers to a native AppKit/Metal window. This path
 accepts the main output with null open parameters, linear uncompressed BGRA8, option zero,
 matching buffer-group dimensions and VSYNC mode 1. It supports registration, rate control,
-flip and close. Missing flip-event, kernel/direct-memory, input/audio and other system
-bindings still prevent the supplied homebrew games from starting. Component tests verify
+flip, completion events and close. Kernel direct memory supports shared aliases and partial
+release. Event queues support blocking, timed and polling waits. Missing payload startup,
+input/audio and other system bindings still prevent the supplied homebrew games from starting. Component tests verify
 the displayed drawable; they do not establish game compatibility.
 
 CPU runner exit codes are `0` for a completed guest return, `1` for usage, and `2` for loading,

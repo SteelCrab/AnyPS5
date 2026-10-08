@@ -21,6 +21,9 @@ public:
     void Map(std::uint64_t address, std::size_t size, std::uint32_t permissions,
              std::span<const std::byte> initial = {});
     void Unmap(std::uint64_t address);
+    void Unmap(std::uint64_t address, std::size_t size);
+    void MapAlias(std::uint64_t address, std::size_t size, std::uint32_t permissions, std::uint64_t source);
+    [[nodiscard]] bool Vacant(std::uint64_t address, std::size_t size) const noexcept;
     [[nodiscard]] bool TryRead(std::uint64_t address, std::span<std::byte> bytes) const noexcept;
     [[nodiscard]] bool TryWrite(std::uint64_t address, std::span<const std::byte> bytes) noexcept;
     [[nodiscard]] bool Contains(std::uint64_t address, std::size_t size, std::uint32_t permissions) const noexcept;

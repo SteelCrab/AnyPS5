@@ -1,4 +1,4 @@
-add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp
+add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp NativeKernel.cpp NativeThreads.cpp
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/src/x86/X64InstructionDecoder.cpp")
 target_include_directories(anyps5_arm64 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/include"
@@ -26,6 +26,16 @@ add_executable(anyps5_arm64_run Main.cpp)
 target_link_libraries(anyps5_arm64_run PRIVATE anyps5_native_video)
 anyps5_sign_jit(anyps5_arm64_run)
 if(BUILD_TESTING)
+    add_test_executable(arm64_thread_tests tests/NativeThreadsTests.cpp)
+    target_link_libraries(arm64_thread_tests PRIVATE anyps5_arm64)
+    anyps5_sign_jit(arm64_thread_tests)
+    add_test(NAME arm64_threads COMMAND arm64_thread_tests)
+    set_tests_properties(arm64_threads PROPERTIES TIMEOUT 30)
+    add_test_executable(arm64_kernel_tests tests/NativeKernelTests.cpp)
+    target_link_libraries(arm64_kernel_tests PRIVATE anyps5_arm64)
+    anyps5_sign_jit(arm64_kernel_tests)
+    add_test(NAME arm64_kernel COMMAND arm64_kernel_tests)
+    set_tests_properties(arm64_kernel PROPERTIES TIMEOUT 30)
     add_test_executable(arm64_video_tests tests/NativeVideoTests.cpp)
     target_link_libraries(arm64_video_tests PRIVATE anyps5_native_video)
     anyps5_sign_jit(arm64_video_tests)

@@ -2,6 +2,7 @@
 #include "ElfImage.hpp"
 #include "NativeLibc.hpp"
 #include "NativeVideoOut.hpp"
+#include "NativeThreads.hpp"
 #include <charconv>
 #include <cstdio>
 #include <cstring>
@@ -27,11 +28,16 @@ int main(int argc, char** argv) {
         if (!input) throw std::runtime_error("Cannot open guest ELF");
         const std::string bytes{std::istreambuf_iterator<char>(input), {}};
         AnyPS5::Arm64::NativeLibc libc;
-        AnyPS5::Arm64::NativeVideoOut video;
+        AnyPS5::Arm64::NativeKernel kernel;
+        AnyPS5::Arm64::NativeVideoOut video(kernel);
         AnyPS5::Arm64::ElfOptions options;
-        options.resolveImport = [&libc, &video](const auto& symbol) {
+        options.resolveImport = [&libc, &kernel, &video](const auto& symbol) {
             const auto resolved = libc.Resolve(symbol);
-            return resolved != 0 ? resolved : video.Resolve(symbol);
+            if (resolved != 0) return resolved;
+            const auto threadResolved = AnyPS5::Arm64::NativeThreads::Resolve(symbol);
+            if (threadResolved != 0) return threadResolved;
+            const auto kernelResolved = kernel.Resolve(symbol);
+            return kernelResolved != 0 ? kernelResolved : video.Resolve(symbol);
         };
         auto image = AnyPS5::Arm64::LoadElf(std::as_bytes(std::span(bytes.data(), bytes.size())), options);
         constexpr std::uint64_t stack = 0x7fffff000000u;
@@ -42,7 +48,11 @@ int main(int argc, char** argv) {
         state.registers[4] = stack + stackSize - 8;
         AnyPS5::Arm64::Cpu cpu(image.memory);
         libc.Bind(cpu, image.memory);
+        kernel.Bind(cpu);
         video.Bind(cpu);
+        AnyPS5::Arm64::NativeThreads threads(libc, image.memory, budget);
+        threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); }, [&] { kernel.Shutdown(); });
+        threads.Bind(cpu);
         const auto initialBudget = budget;
         const auto run = [&](std::uint64_t address) {
             state = {};
@@ -60,6 +70,7 @@ int main(int argc, char** argv) {
         for (const auto finalizer : image.finalizers) {
             run(finalizer);
         }
+        threads.Finish();
         std::printf("Native ARM64 execution: guest returned 0x%llx, %zu translated blocks, %llu instructions\n",
             static_cast<unsigned long long>(result), cpu.CompiledBlocks(), static_cast<unsigned long long>(initialBudget - budget));
         return 0;

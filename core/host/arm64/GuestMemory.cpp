@@ -3,6 +3,7 @@
 #include <cstring>
 #include <cerrno>
 #include <limits>
+#include <mutex>
 #include <stdexcept>
 #include <system_error>
 #include <sys/mman.h>
@@ -15,11 +16,17 @@ struct GuestMemory::Impl {
         std::size_t size;
         std::uint32_t permissions;
         void* data;
+        std::shared_ptr<void> backing;
     };
     std::vector<Region> regions;
     std::uint64_t codeVersion = 0;
-    ~Impl() {
-        for (const auto& region : regions) munmap(region.data, region.size);
+    mutable std::mutex mutex;
+    bool vacant(std::uint64_t address, std::size_t size) const noexcept {
+        if (size == 0 || size > std::numeric_limits<std::uint64_t>::max() - address) return false;
+        for (const auto& region : regions) {
+            if (address < region.address + region.size && region.address < address + size) return false;
+        }
+        return true;
     }
     const Region* find(std::uint64_t address) const noexcept {
         for (const auto& region : regions) {
@@ -47,22 +54,23 @@ GuestMemory& GuestMemory::operator=(GuestMemory&&) noexcept = default;
 
 void GuestMemory::Map(std::uint64_t address, std::size_t size, std::uint32_t permissions, std::span<const std::byte> initial) {
     if (!impl) throw std::runtime_error("Guest memory was moved from");
+    std::lock_guard lock(impl->mutex);
     if (size == 0 || size > std::numeric_limits<std::uint64_t>::max() - address || initial.size() > size || (permissions & ~7u) != 0) {
         throw std::runtime_error("Invalid guest memory mapping");
     }
-    for (const auto& region : impl->regions) {
-        if (address < region.address + region.size && region.address < address + size) throw std::runtime_error("Guest memory mappings overlap");
-    }
+    if (!impl->vacant(address, size)) throw std::runtime_error("Guest memory mappings overlap");
     impl->regions.reserve(impl->regions.size() + 1);
     void* data = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (data == MAP_FAILED) throw std::system_error(errno, std::generic_category(), "Guest memory allocation failed");
+    std::shared_ptr<void> backing(data, [size](void* storage) { munmap(storage, size); });
     if (!initial.empty()) std::memcpy(data, initial.data(), initial.size());
-    impl->regions.push_back({address, size, permissions, data});
+    impl->regions.push_back({address, size, permissions, data, std::move(backing)});
     if ((permissions & Execute) != 0) ++impl->codeVersion;
 }
 
 bool GuestMemory::TryRead(std::uint64_t address, std::span<std::byte> bytes) const noexcept {
     if (!impl) return false;
+    std::lock_guard lock(impl->mutex);
     if (!impl->range(address, bytes.size(), Read)) return false;
     while (!bytes.empty()) {
         const auto* region = impl->find(address);
@@ -77,23 +85,26 @@ bool GuestMemory::TryRead(std::uint64_t address, std::span<std::byte> bytes) con
 
 void GuestMemory::Unmap(std::uint64_t address) {
     if (!impl) throw std::runtime_error("Guest memory was moved from");
+    std::lock_guard lock(impl->mutex);
     const auto found = std::find_if(impl->regions.begin(), impl->regions.end(), [address](const auto& region) { return region.address == address; });
     if (found == impl->regions.end()) throw std::runtime_error("Guest memory mapping does not exist");
-    if (munmap(found->data, found->size) != 0) throw std::runtime_error("Guest memory unmapping failed");
     if ((found->permissions & Execute) != 0) ++impl->codeVersion;
     impl->regions.erase(found);
 }
 
 bool GuestMemory::TryWrite(std::uint64_t address, std::span<const std::byte> bytes) noexcept {
     if (!impl) return false;
+    std::lock_guard lock(impl->mutex);
     if (!impl->range(address, bytes.size(), Write)) return false;
     bool changedCode = false;
     while (!bytes.empty()) {
         const auto* region = impl->find(address);
         const auto offset = static_cast<std::size_t>(address - region->address);
         const auto size = std::min(bytes.size(), region->size - offset);
-        if ((region->permissions & Execute) != 0 &&
-            std::memcmp(static_cast<const std::byte*>(region->data) + offset, bytes.data(), size) != 0) changedCode = true;
+        const bool executable = std::any_of(impl->regions.begin(), impl->regions.end(), [region](const auto& alias) {
+            return alias.backing == region->backing && (alias.permissions & Execute) != 0;
+        });
+        if (executable && std::memcmp(static_cast<const std::byte*>(region->data) + offset, bytes.data(), size) != 0) changedCode = true;
         std::memcpy(static_cast<std::byte*>(region->data) + offset, bytes.data(), size);
         bytes = bytes.subspan(size);
         address += size;
@@ -102,14 +113,21 @@ bool GuestMemory::TryWrite(std::uint64_t address, std::span<const std::byte> byt
     return true;
 }
 
-std::uint64_t GuestMemory::CodeVersion() const noexcept { return impl ? impl->codeVersion : 0; }
+std::uint64_t GuestMemory::CodeVersion() const noexcept {
+    if (!impl) return 0;
+    std::lock_guard lock(impl->mutex);
+    return impl->codeVersion;
+}
 
 bool GuestMemory::Contains(std::uint64_t address, std::size_t size, std::uint32_t permissions) const noexcept {
-    return impl && (permissions & ~7u) == 0 && impl->range(address, size, permissions);
+    if (!impl) return false;
+    std::lock_guard lock(impl->mutex);
+    return (permissions & ~7u) == 0 && impl->range(address, size, permissions);
 }
 
 std::vector<std::uint8_t> GuestMemory::Fetch(std::uint64_t address, std::size_t maximum) const {
     if (!impl) throw std::runtime_error("Guest memory was moved from");
+    std::lock_guard lock(impl->mutex);
     std::vector<std::uint8_t> bytes;
     while (bytes.size() < maximum) {
         const auto* region = impl->find(address);
@@ -122,6 +140,42 @@ std::vector<std::uint8_t> GuestMemory::Fetch(std::uint64_t address, std::size_t 
         if (address == 0) break;
     }
     return bytes;
+}
+
+bool GuestMemory::Vacant(std::uint64_t address, std::size_t size) const noexcept {
+    if (!impl) return false;
+    std::lock_guard lock(impl->mutex);
+    return impl->vacant(address, size);
+}
+
+void GuestMemory::MapAlias(std::uint64_t address, std::size_t size, std::uint32_t permissions, std::uint64_t source) {
+    if (!impl) throw std::runtime_error("Guest memory was moved from");
+    std::lock_guard lock(impl->mutex);
+    if ((permissions & ~7u) != 0 || !impl->vacant(address, size)) throw std::runtime_error("Invalid or overlapping guest alias mapping");
+    const auto* region = impl->find(source);
+    if (!region || size > region->size - (source - region->address)) throw std::runtime_error("Guest alias source is outside one mapped backing");
+    const Impl::Region alias{address, size, permissions, static_cast<std::byte*>(region->data) + (source - region->address), region->backing};
+    impl->regions.push_back(alias);
+    if ((permissions & Execute) != 0) ++impl->codeVersion;
+}
+
+void GuestMemory::Unmap(std::uint64_t address, std::size_t size) {
+    if (!impl) throw std::runtime_error("Guest memory was moved from");
+    std::lock_guard lock(impl->mutex);
+    if (size == 0 || !impl->range(address, size, 0)) throw std::runtime_error("Guest unmap range is not fully mapped");
+    const auto end = address + size;
+    std::vector<Impl::Region> remaining;
+    remaining.reserve(impl->regions.size() + 1);
+    bool changedCode = false;
+    for (const auto& region : impl->regions) {
+        const auto regionEnd = region.address + region.size;
+        if (regionEnd <= address || region.address >= end) { remaining.push_back(region); continue; }
+        changedCode |= (region.permissions & Execute) != 0;
+        if (region.address < address) remaining.push_back({region.address, static_cast<std::size_t>(address - region.address), region.permissions, region.data, region.backing});
+        if (regionEnd > end) remaining.push_back({end, static_cast<std::size_t>(regionEnd - end), region.permissions, static_cast<std::byte*>(region.data) + (end - region.address), region.backing});
+    }
+    impl->regions.swap(remaining);
+    if (changedCode) ++impl->codeVersion;
 }
 
 }
