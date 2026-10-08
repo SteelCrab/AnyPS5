@@ -1,9 +1,10 @@
-add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp NativeKernel.cpp NativeThreads.cpp
+add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp NativeKernel.cpp NativeThreads.cpp NativeMath.cpp
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/src/x86/X64InstructionDecoder.cpp")
 target_include_directories(anyps5_arm64 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/include"
     "${PROJECT_SOURCE_DIR}/core/relinker/domain/include")
 set_target_properties(anyps5_arm64 PROPERTIES CXX_EXTENSIONS OFF)
+set_source_files_properties(NativeMath.cpp PROPERTIES COMPILE_OPTIONS "-ffp-exception-behavior=strict")
 option(ANYPS5_MACOS_HARDENED_JIT "Ad-hoc sign native CPU executables with hardened runtime and allow-jit" ON)
 file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/jit-signing-mode.txt" CONTENT "${ANYPS5_MACOS_HARDENED_JIT}\n")
 if(ANYPS5_MACOS_HARDENED_JIT)
@@ -26,6 +27,12 @@ add_executable(anyps5_arm64_run Main.cpp)
 target_link_libraries(anyps5_arm64_run PRIVATE anyps5_native_video)
 anyps5_sign_jit(anyps5_arm64_run)
 if(BUILD_TESTING)
+    add_test_executable(arm64_math_tests tests/NativeMathTests.cpp)
+    target_link_libraries(arm64_math_tests PRIVATE anyps5_arm64)
+    target_compile_options(arm64_math_tests PRIVATE -ffp-exception-behavior=strict)
+    anyps5_sign_jit(arm64_math_tests)
+    add_test(NAME arm64_math COMMAND arm64_math_tests)
+    set_tests_properties(arm64_math PROPERTIES TIMEOUT 30)
     add_test_executable(arm64_thread_tests tests/NativeThreadsTests.cpp)
     target_link_libraries(arm64_thread_tests PRIVATE anyps5_arm64)
     anyps5_sign_jit(arm64_thread_tests)

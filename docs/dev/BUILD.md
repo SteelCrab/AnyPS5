@@ -80,6 +80,9 @@ errors and nested callback instruction budgets. `arm64_thread_kernel` compiles x
 at O0/O2/O3 and executes four workers with shared heap access, once initialization, thread
 keys/destructors, separate errno cells, a condition barrier and semaphores. It also checks
 joined/detached worker failure propagation and process teardown with a blocked detached worker.
+`arm64_math` checks XMM floating arguments/returns, mixed integer arguments, integer returns,
+signed zero, NaNs, domain/range errno and preservation of the host floating environment.
+`arm64_libc` also checks UTF-8 wide-string precision at a guest mapping boundary.
 
 `arm64_integer` checks narrow registers, arithmetic flags, shifts, rotates, conditional writes,
 stack faults and segmented addresses. `arm64_wide_integer` compares MUL/IMUL/DIV/IDIV with
@@ -91,7 +94,8 @@ then compares execution results, including compiler-generated SSE2. It needs an 
 `-DANYPS5_ELF_LINKER=/absolute/path/to/ld.lld`. This test is omitted with a configure message
 when LLD is unavailable. `arm64_dynamic_kernel` uses the same linker to check dynamic ELF
 initialization, native libc calls, floating returns, compiler-generated va_list and cumulative
-instruction budgets at O0/O2/O3. LLD is only a test build tool; the runtime does not link to it.
+instruction budgets and native math argument/return ABI at O0/O2/O3. LLD is only a test build
+tool; the runtime does not link to it.
 
 `arm64_video` runs x86-64 instructions through the ARM64 native VideoOut bridge and verifies
 pixels from the actual Metal window drawable and its completion event using kernel direct

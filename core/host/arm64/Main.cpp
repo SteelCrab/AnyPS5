@@ -3,6 +3,7 @@
 #include "NativeLibc.hpp"
 #include "NativeVideoOut.hpp"
 #include "NativeThreads.hpp"
+#include "NativeMath.hpp"
 #include <charconv>
 #include <cstdio>
 #include <cstring>
@@ -28,6 +29,7 @@ int main(int argc, char** argv) {
         if (!input) throw std::runtime_error("Cannot open guest ELF");
         const std::string bytes{std::istreambuf_iterator<char>(input), {}};
         AnyPS5::Arm64::NativeLibc libc;
+        AnyPS5::Arm64::NativeMath math(libc);
         AnyPS5::Arm64::NativeKernel kernel;
         AnyPS5::Arm64::NativeVideoOut video(kernel);
         AnyPS5::Arm64::ElfOptions options;
@@ -36,6 +38,8 @@ int main(int argc, char** argv) {
             if (resolved != 0) return resolved;
             const auto threadResolved = AnyPS5::Arm64::NativeThreads::Resolve(symbol);
             if (threadResolved != 0) return threadResolved;
+            const auto mathResolved = AnyPS5::Arm64::NativeMath::Resolve(symbol);
+            if (mathResolved != 0) return mathResolved;
             const auto kernelResolved = kernel.Resolve(symbol);
             return kernelResolved != 0 ? kernelResolved : video.Resolve(symbol);
         };
@@ -50,8 +54,9 @@ int main(int argc, char** argv) {
         libc.Bind(cpu, image.memory);
         kernel.Bind(cpu);
         video.Bind(cpu);
+        math.Bind(cpu);
         AnyPS5::Arm64::NativeThreads threads(libc, image.memory, budget);
-        threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); }, [&] { kernel.Shutdown(); });
+        threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); math.Bind(threadCpu); }, [&] { kernel.Shutdown(); });
         threads.Bind(cpu);
         const auto initialBudget = budget;
         const auto run = [&](std::uint64_t address) {

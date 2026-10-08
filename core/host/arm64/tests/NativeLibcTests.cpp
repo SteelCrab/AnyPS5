@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <cstring>
+#include <clocale>
 #include <unistd.h>
 #include <stdexcept>
 #include <string>
@@ -218,6 +219,14 @@ void testFormatting() {
     rejects([&] { fixture.Call("snprintf", {0x1200, 32, 0x1000, 42}); }, "Positional");
     fixture.String(0x1000, "%Lf");
     rejects([&] { fixture.Call("snprintf", {0x1200, 32, 0x1000}); }, "extended floating-point");
+    require(std::setlocale(LC_CTYPE, "en_US.UTF-8") != nullptr, "Could not activate UTF-8 locale for wide precision regression");
+    struct Locale { ~Locale() { std::setlocale(LC_CTYPE, "C"); } } locale;
+    const wchar_t euro = L'\u20ac';
+    require(fixture.memory.TryWrite(0x1ffc, std::as_bytes(std::span(&euro, 1))), "Could not initialize bounded wide string");
+    fixture.String(0x1000, "%.2ls");
+    require(fixture.Call("snprintf", {0x1200, 32, 0x1000, 0x1ffc}) == 0 && fixture.Bytes(0x1200, 1)[0] == std::byte{}, "Wide precision split a multibyte character or read past the required input");
+    fixture.String(0x1000, "%.3ls");
+    require(fixture.Call("snprintf", {0x1200, 32, 0x1000, 0x1ffc}) == 3 && fixture.Bytes(0x1200, 4) == std::vector<std::byte>{std::byte{0xe2}, std::byte{0x82}, std::byte{0xac}, {}}, "Wide precision did not emit one complete UTF-8 character");
 }
 
 }

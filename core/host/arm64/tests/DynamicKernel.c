@@ -9,6 +9,11 @@ extern unsigned long long strtoull(const char* string, char** end, int base);
 extern double strtod(const char* string, char** end);
 extern int vsnprintf(char* output, unsigned long size, const char* format, va_list arguments);
 extern int snprintf(char* output, unsigned long size, const char* format, ...);
+extern double pow(double left, double right);
+extern double exp2(double value);
+extern double scalbn(double value, int exponent);
+extern float cosf(float value);
+extern long lround(double value);
 
 unsigned long initialized;
 
@@ -42,6 +47,15 @@ unsigned long GuestMain(void) {
     } floating;
     floating.value = strtod("16.25", 0);
     if (floating.bits != 0x4030400000000000UL) return 6;
+    floating.value = pow(2.0, 5.0);
+    if (floating.bits != 0x4040000000000000UL) return 10;
+    floating.value = exp2(-3.0);
+    if (floating.bits != 0x3fc0000000000000UL) return 11;
+    floating.value = scalbn(1.5, 3);
+    if (floating.bits != 0x4028000000000000UL || lround(-2.5) != -3) return 12;
+    union { float value; unsigned int bits; } narrow;
+    narrow.value = cosf(0.0f);
+    if (narrow.bits != 0x3f800000U) return 13;
     char formatted[64];
     int printed = 0;
     if (Format(formatted, sizeof(formatted), "%s %u %.2f %llx%n", "M5", 29, 16.25, 0x123ULL, &printed) != 15) return 7;

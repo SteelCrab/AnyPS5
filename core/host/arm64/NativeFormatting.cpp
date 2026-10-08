@@ -38,6 +38,24 @@ std::basic_string<TCharacter> string(const GuestMemory& memory, std::uint64_t ad
     return value;
 }
 
+std::string wideString(const GuestMemory& memory, std::uint64_t address, std::size_t maximum) {
+    std::string value;
+    std::mbstate_t state{};
+    while (value.size() < maximum) {
+        const auto character = read<wchar_t>(memory, address);
+        if (character == 0) break;
+        std::array<char, MB_LEN_MAX> encoded{};
+        const auto count = std::wcrtomb(encoded.data(), character, &state);
+        if (count == std::numeric_limits<std::size_t>::max()) throw std::runtime_error("Guest wide format character cannot be converted in the host locale");
+        if (count > maximum - value.size()) break;
+        value.append(encoded.data(), count);
+        if (value.size() == maximum) break;
+        if (address > std::numeric_limits<std::uint64_t>::max() - sizeof(character)) throw std::runtime_error("Guest format string address overflows");
+        address += sizeof(character);
+    }
+    return value;
+}
+
 struct VaList {
     std::uint32_t generalOffset;
     std::uint32_t vectorOffset;
@@ -161,8 +179,8 @@ std::string format(GuestMemory& memory, const std::string& input, Arguments& arg
         } else if (conversion == 's') {
             const auto address = arguments.Integer();
             if (length == "l") {
-                const auto value = string<wchar_t>(memory, address, precision);
-                result += render(token + "ls", value.c_str());
+                const auto value = wideString(memory, address, precision);
+                result += render(token + "s", value.c_str());
             } else if (length.empty()) {
                 const auto value = string<char>(memory, address, precision);
                 result += render(token + "s", value.c_str());

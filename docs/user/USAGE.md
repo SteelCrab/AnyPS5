@@ -146,6 +146,9 @@ and CpuState/XMM access. The native libc bridge implements heap/memory/string fu
 character classification, integer and float/double parsing, basic stdio, and common printf
 formats. x86-64 va_list is decoded independently of the ARM64 host ABI. Positional and
 extended floating-point formats are unsupported. This remains a partial system-library ABI.
+The native math bridge supplies float/double trigonometric, logarithmic, exponential,
+rounding and scaling functions. It converts domain/range exceptions to guest errno.
+It uses the ARM64 host math library; x87 and guest MXCSR control remain unsupported.
 
 Native thread calls run each worker with its own ARM64 CPU, stack and instruction budget.
 Mutexes, conditions, reader/writer locks, thread keys, once initialization and process-private
