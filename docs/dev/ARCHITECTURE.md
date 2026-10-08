@@ -67,3 +67,17 @@ flowchart LR
 
 - [`Recompiler.cpp`](../../core/shader/recompiler/Recompiler.cpp) runs the stages in this order. With `ANYPS5_ENABLE_SPIRV_TOOLS`, the SPIR-V is also validated and optimized with SPIRV-Tools.
 - `ShaderRecompiler::Recompile` keeps compiled variants in memory, and `ShaderDiskCache` stores them on disk so later runs reuse them.
+
+## Experimental macOS path
+
+[`core/host/arm64`](../../core/host/arm64) maps static ELF segments into checked guest memory,
+decodes a subset of x86-64 integer instructions, and emits ARM64 basic blocks into an Apple
+Silicon JIT arena. Guest branches return to the CPU dispatcher, which caches translated blocks.
+Guest code bytes are data and are never executed directly. Native callback bindings translate
+integer arguments from the guest SysV registers and stack into an ARM64 C++ call.
+
+[`core/host/metal`](../../core/host/metal) converts the shader recompiler's SPIR-V to MSL and
+uses Metal directly for GPU compilation and commands. The CPU-to-Metal test exercises a guest
+call to a native callback, GPU compute/RDNA rendering, and guest-memory readback. This is not an AGC export or
+a running title. Dynamic imports, the full guest CPU/PRX ABI, and the game graphics driver are
+not integrated; see [technical debt](TechnicalDebt.md#build).

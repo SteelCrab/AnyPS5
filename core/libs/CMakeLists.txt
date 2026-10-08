@@ -41,6 +41,28 @@ if(MINGW)
 endif()
 
 set(LIBC_DIR ${CMAKE_CURRENT_SOURCE_DIR}/prx/libc)
+file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
+list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
+set(ANYPS5_REPLACEMENT_MODULES libc.prx)
+foreach(LIB_DIR ${LIBS_DIRS})
+    if(IS_DIRECTORY ${LIB_DIR})
+        get_filename_component(LIB_NAME ${LIB_DIR} NAME)
+        list(APPEND ANYPS5_REPLACEMENT_MODULES ${LIB_NAME}.prx)
+    endif()
+endforeach()
+set(ANYPS5_REPLACEMENT_MODULES ${ANYPS5_REPLACEMENT_MODULES} PARENT_SCOPE)
+
+if(NOT ANYPS5_BUILD_RUNTIME)
+    if(BUILD_TESTING)
+        find_package(Python3 QUIET COMPONENTS Interpreter)
+        if(Python3_Interpreter_FOUND)
+            add_test(NAME nid_patcher_symbol_versions COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/nid/tests/test_symbol_versions.py $<TARGET_FILE:nid_patcher>)
+        endif()
+    endif()
+    return()
+endif()
+
 add_library(libc SHARED EXCLUDE_FROM_ALL)
 set(LIBS_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 add_subdirectory(${LIBC_DIR} ${CMAKE_CURRENT_BINARY_DIR}/prx/libc)
@@ -72,11 +94,7 @@ add_custom_command(
         COMMENT "Patching NIDs for libc"
 )
 
-file(GLOB LIBS_DIRS LIST_DIRECTORIES true ${CMAKE_CURRENT_SOURCE_DIR}/prx/*)
-list(REMOVE_ITEM LIBS_DIRS ${LIBC_DIR})
-
 set(PATCHED_OUTPUTS ${LIBC_PATCHED})
-set(ANYPS5_REPLACEMENT_MODULES libc.prx)
 
 foreach(LIB_DIR ${LIBS_DIRS})
     if(IS_DIRECTORY ${LIB_DIR})
@@ -126,10 +144,8 @@ foreach(LIB_DIR ${LIBS_DIRS})
         )
 
         list(APPEND PATCHED_OUTPUTS ${PATCHED_FILE})
-        list(APPEND ANYPS5_REPLACEMENT_MODULES ${LIB_NAME}.prx)
     endif()
 endforeach()
-set(ANYPS5_REPLACEMENT_MODULES ${ANYPS5_REPLACEMENT_MODULES} PARENT_SCOPE)
 
 add_custom_target(libs DEPENDS ${PATCHED_OUTPUTS})
 

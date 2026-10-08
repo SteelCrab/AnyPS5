@@ -98,3 +98,58 @@ The game runs on the first Vulkan 1.1 device with graphics and compute queues an
 ## Exit codes
 
 `0`: conversion succeeded. `1`: invalid arguments. `2`: conversion failed; the error is printed to stderr. With `--autorun`, successful conversion returns the launched application's exit code.
+
+## Mac Apple Silicon
+
+Native macOS game execution is not implemented. The relinker still emits x86-64 ELF or PE;
+it does not produce a Mach-O game executable.
+Linux and Windows compatibility results do not establish macOS compatibility.
+On macOS, `--autorun` fails before conversion or output creation.
+
+An experimental ARM64 CPU runner accepts a static ELF64 x86-64 image with a callable entry
+function. It maps load segments and a private guest stack, translates basic blocks to ARM64,
+and executes them in the native process. A return to the zero sentinel ends execution and
+prints RAX. It does not provide Linux process startup, syscalls, game imports, or a PS5 runtime.
+
+```sh
+build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf
+build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf 100000
+```
+
+The optional positive instruction budget defaults to 1000000. Common register, immediate and
+ModRM forms are supported in the current CPU subset:
+32/64-bit MOV, LEA, register XCHG, ADD, SUB, AND, OR, XOR, CMP, TEST, INC, DEC, 64-bit PUSH/POP, direct and
+indirect JMP/CALL, all 16 Jcc conditions, RET and NOP. Memory operands support base/index/scale,
+signed displacements, and RIP-relative addressing. Unsupported instructions report the guest
+address and stop. Dynamic imports, an ELF interpreter, TLS, and writable executable guest
+segments fail before execution. The integer callback API provides six SysV integer arguments,
+guest stack arguments, a checked guest-memory interface, and an integer return. It is not a
+complete system-library ABI.
+
+CPU runner exit codes are `0` for a completed guest return, `1` for usage, and `2` for loading,
+translation, memory, callback or budget failure. The printed guest return value is separate
+from the runner's exit code.
+
+The ARM64 Metal shader tool translates SPIR-V to MSL and compiles it on the Apple GPU:
+
+```sh
+build-macos/core/host/metal/agc_metal_shader shader.spv output.metal
+build-macos/core/host/metal/agc_metal_shader shader.req output.metal
+```
+
+The AGC driver writes `.req` captures when `APS5_DUMP_SHADERS=1` is set on a supported
+Linux/Windows runtime. For these captures, the tool recompiles RDNA for a 32-lane Metal
+target before generating MSL. The tool supports compute, vertex, and fragment stages.
+Unsupported features fail with an error. It writes the output only after native compilation
+succeeds. Exit codes are `0` for success, `1` for usage, and `2` for translation or validation
+failure. A compiled shader is not a running game.
+
+The backend uses Metal directly for buffers, compute submission, rendering, and readback.
+Compute and offscreen graphics resources include buffers, push constants, single-level RGBA8 2D textures, and separate
+samplers. Samplers use normalized coordinates with nearest or linear filtering and clamp-to-edge,
+repeat or mirror-repeat addressing. Other image dimensions, arrays, depth, multisampling, integer
+images and storage formats are rejected. Offscreen graphics draws one procedural triangle.
+Vertex attributes, index buffers, other draw commands, depth/stencil, blending and presentation
+are not implemented.
+The macOS build has no Vulkan or MoltenVK runtime dependency. See the [build instructions](../dev/BUILD.md#macos-and-apple-silicon)
+for tests and [technical debt](../dev/TechnicalDebt.md#build) for remaining native-runtime work.

@@ -241,18 +241,20 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_symbol_names.py $<TARGET_FILE:relinker>)
         add_test(NAME guest_host_libc COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_host_libc.py $<TARGET_FILE:relinker>)
-        add_library(guest_lifecycle_replacement_fixture SHARED elfpatcher/tests/GuestLifecycleReplacement.cpp)
-        target_include_directories(guest_lifecycle_replacement_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
-        if(MINGW)
-            target_compile_options(guest_lifecycle_replacement_fixture PRIVATE
-                -fno-asynchronous-unwind-tables -fno-exceptions)
+        if(ANYPS5_BUILD_RUNTIME)
+            add_library(guest_lifecycle_replacement_fixture SHARED elfpatcher/tests/GuestLifecycleReplacement.cpp)
+            target_include_directories(guest_lifecycle_replacement_fixture PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../libs)
+            if(MINGW)
+                target_compile_options(guest_lifecycle_replacement_fixture PRIVATE
+                    -fno-asynchronous-unwind-tables -fno-exceptions)
+            endif()
+            configure_windows_unwind(guest_lifecycle_replacement_fixture)
+            set_target_properties(guest_lifecycle_replacement_fixture PROPERTIES
+                PREFIX "" SUFFIX ".prx" WINDOWS_EXPORT_ALL_SYMBOLS ON)
+            add_test(NAME guest_lifecycle_ownership COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_lifecycle_ownership.py
+                $<TARGET_FILE:relinker> $<TARGET_FILE:guest_lifecycle_replacement_fixture>)
         endif()
-        configure_windows_unwind(guest_lifecycle_replacement_fixture)
-        set_target_properties(guest_lifecycle_replacement_fixture PROPERTIES
-            PREFIX "" SUFFIX ".prx" WINDOWS_EXPORT_ALL_SYMBOLS ON)
-        add_test(NAME guest_lifecycle_ownership COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_lifecycle_ownership.py
-            $<TARGET_FILE:relinker> $<TARGET_FILE:guest_lifecycle_replacement_fixture>)
         add_test(NAME guest_absolute_symbols COMMAND ${Python3_EXECUTABLE}
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/test_guest_absolute_symbols.py $<TARGET_FILE:relinker>)
         add_test(NAME windows_import_modules COMMAND ${Python3_EXECUTABLE}
@@ -306,7 +308,7 @@ if(BUILD_TESTING)
     )
     add_test(NAME strict_nid_filter COMMAND strict_nid_filter_tests)
 
-    if(UNIX AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
         add_test_executable(to_intel_linux_stubs_tests
             ${CMAKE_CURRENT_SOURCE_DIR}/relinker/tests/ToIntelLinuxStubsTests.cpp
         )

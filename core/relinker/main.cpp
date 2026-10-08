@@ -37,6 +37,9 @@ int main(const int argc, char* argv[]) {
     }
 
     try {
+#ifdef __APPLE__
+        if (args.autorun) throw Domain::RelinkerException("Native macOS game execution is not implemented: x86-64 to ARM64 conversion and a macOS guest loader are required");
+#endif
         auto extension = std::filesystem::path(args.outputPath).extension().string();
         for (auto& character : extension) if (character >= 'A' && character <= 'Z') character = static_cast<char>(character + ('a' - 'A'));
         if (!args.toWindows && extension == ".exe") std::cerr << "WARNING: Output filename ends with .exe, but --windows was not specified. The output will be a Linux ELF executable.\n";

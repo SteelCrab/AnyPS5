@@ -11,6 +11,9 @@
 #endif
 #include <windows.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include "ShaderCacheVersion.hpp"
 #include <algorithm>
 #include <atomic>
@@ -52,7 +55,15 @@ std::filesystem::path ShaderCacheDirectory() {
     const char* directory = std::getenv("ANYPS5_SHADER_CACHE_DIR");
     if (directory != nullptr && *directory != '\0') return std::filesystem::path(directory);
     std::error_code error;
+#ifdef __APPLE__
+    std::uint32_t length = 0;
+    _NSGetExecutablePath(nullptr, &length);
+    std::vector<char> path(length);
+    if (_NSGetExecutablePath(path.data(), &length) != 0) return {};
+    const auto executable = std::filesystem::canonical(path.data(), error);
+#else
     const auto executable = std::filesystem::read_symlink("/proc/self/exe", error);
+#endif
     if (error) return {};
     return executable.parent_path() / "shader_cache";
 #endif

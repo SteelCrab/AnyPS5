@@ -2,6 +2,7 @@
 #include <elfpatcher/general/ElfConstants.hpp>
 #include <domain/Types.hpp>
 #include <cstdint>
+#include <limits>
 #include <string>
 
 namespace Elfpatcher {
@@ -130,20 +131,25 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     std::vector<std::uint8_t>& buf,
     const ProgramHeaderLayoutRequest& request
 ) const {
-    std::uint16_t keptCount = 0;
+    std::size_t keptCount = 0;
     for (const auto& ph : request.OriginalHeaders) {
         if (_segmentFilter->ShouldSkip(ph))
             continue;
         keptCount++;
     }
 
-    const std::uint16_t neededPh = keptCount + kSyntheticProgramHeaderCount;
-    if (neededPh > request.PhNum)
-        throw Domain::RelinkerException(
-            "Not enough program header slots: need " + std::to_string(neededPh) +
-            ", available " + std::to_string(request.PhNum));
+    const auto neededPh = keptCount + kSyntheticProgramHeaderCount;
+    if (neededPh > std::numeric_limits<std::uint16_t>::max())
+        throw Domain::RelinkerException("Too many output program headers");
+    auto phOff = request.PhOff;
+    auto headerBlockSize = phOff + neededPh * request.PhEntSize;
+    if (neededPh > request.PhNum) {
+        phOff = (static_cast<std::uint64_t>(buf.size()) + kPhdrHeaderAlignment - 1) & ~(kPhdrHeaderAlignment - 1);
+        headerBlockSize = phOff + neededPh * request.PhEntSize;
+        buf.resize(static_cast<std::size_t>(headerBlockSize));
+        _byteWriter->WriteU64(buf, kEhdrPhOffOffset, phOff);
+    }
 
-    const std::uint64_t headerBlockSize = request.PhOff + static_cast<std::uint64_t>(neededPh) * request.PhEntSize;
     std::uint64_t headerBlockAlign = kDefaultLoadAlignment;
     for (const auto& ph : request.OriginalHeaders) {
         if (ph.Type == PT_LOAD && !_segmentFilter->ShouldSkip(ph) && ph.Alignment > headerBlockAlign && (ph.Alignment & (ph.Alignment - 1)) == 0)
@@ -166,18 +172,18 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
 
     std::uint16_t writtenPh = 0;
 
-    const std::size_t phdrEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
-    _writeProgramHeader(buf, phdrEntOff, _makePhdrHeader(request.PhOff, headerBlockVaddr + request.PhOff, static_cast<std::uint64_t>(neededPh) * request.PhEntSize));
+    const std::size_t phdrEntOff = static_cast<std::size_t>(phOff) + writtenPh * request.PhEntSize;
+    _writeProgramHeader(buf, phdrEntOff, _makePhdrHeader(phOff, headerBlockVaddr + phOff, static_cast<std::uint64_t>(neededPh) * request.PhEntSize));
     writtenPh++;
 
-    const std::size_t headerLoadEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
+    const std::size_t headerLoadEntOff = static_cast<std::size_t>(phOff) + writtenPh * request.PhEntSize;
     _writeProgramHeader(buf, headerLoadEntOff, _makeHeaderBlockLoad(headerBlockVaddr, headerBlockSize, headerBlockAlign));
     writtenPh++;
 
     for (const auto& ph : request.OriginalHeaders) {
         if (_segmentFilter->ShouldSkip(ph))
             continue;
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
+        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * request.PhEntSize;
         if (ph.Type == PT_LOAD) {
             Domain::ProgramHeader fixed = ph;
             fixed.Flags = _fixLoadFlags(ph.Flags);
@@ -189,19 +195,19 @@ std::uint16_t ProgramHeaderLayoutBuilder::WriteLayout(
     }
 
     {
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
+        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * request.PhEntSize;
         _writeProgramHeader(buf, phEntOff, _makeLoadHeader(request.ExtraBlockOffset, request.ExtraBlockVaddr, request.ExtraBlockSize));
         writtenPh++;
     }
 
     {
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
+        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * request.PhEntSize;
         _writeProgramHeader(buf, phEntOff, _makeDynamicHeader(request.DynamicSegmentOffset, dynamicSegmentVaddr, request.DynamicSegmentSize));
         writtenPh++;
     }
 
     {
-        const std::size_t phEntOff = static_cast<std::size_t>(request.PhOff) + writtenPh * request.PhEntSize;
+        const std::size_t phEntOff = static_cast<std::size_t>(phOff) + writtenPh * request.PhEntSize;
         _writeProgramHeader(buf, phEntOff, _makeInterpHeader(request.InterpOffset, interpVaddr, request.InterpSize));
         writtenPh++;
     }

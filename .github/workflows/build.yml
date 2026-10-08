@@ -20,6 +20,17 @@ env:
     -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
 jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+      - run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64 -DBUILD_TESTING=ON -DANYPS5_ENABLE_SPIRV_TOOLS=ON
+      - run: cmake --build build --parallel 3
+      - run: ctest --test-dir build --output-on-failure --timeout 120 -LE gpu
+
   linux:
     runs-on: ubuntu-latest
     timeout-minutes: 30

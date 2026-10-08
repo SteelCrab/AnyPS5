@@ -697,10 +697,11 @@ void linuxPlacement() {
     const auto target = 0x1002 + 5 + static_cast<std::int64_t>(read<std::int32_t>(output, 0x203));
     require(target % 16 == 0 && target > 0x2100, "Linux stub is misaligned or inside the original image");
     const auto phNum = read<std::uint16_t>(output, 56);
+    const auto phOff = read<std::uint64_t>(output, 32);
     std::uint64_t bodyOffset = 0;
     bool found = false;
     for (std::uint16_t index = 0; index < phNum; ++index) {
-        const auto header = 64 + index * 56;
+        const auto header = phOff + index * 56;
         if (read<std::uint32_t>(output, header) != 1) continue;
         const auto vaddr = read<std::uint64_t>(output, header + 16);
         const auto memSize = read<std::uint64_t>(output, header + 40);

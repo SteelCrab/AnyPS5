@@ -31,3 +31,6 @@
 [submodule "3rdparty/libjpeg-turbo"]
 	path = 3rdparty/libjpeg-turbo
 	url = https://github.com/libjpeg-turbo/libjpeg-turbo.git
+[submodule "3rdparty/SPIRV-Cross"]
+	path = 3rdparty/SPIRV-Cross
+	url = https://github.com/KhronosGroup/SPIRV-Cross.git
