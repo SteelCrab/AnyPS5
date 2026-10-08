@@ -107,8 +107,16 @@ void Cpu::Run(CpuState& state, std::uint64_t instructionBudget) {
         block->second.function(&state);
         if (state.fault != 0) {
             char message[160];
-            std::snprintf(message, sizeof(message), "Guest memory %s fault at 0x%llx while executing 0x%llx",
-                state.fault == 1 ? "read" : "write", static_cast<unsigned long long>(state.faultAddress), static_cast<unsigned long long>(state.rip));
+            if (state.fault == 5) {
+                std::snprintf(message, sizeof(message), "Guest vector alignment fault at 0x%llx while executing 0x%llx",
+                    static_cast<unsigned long long>(state.faultAddress), static_cast<unsigned long long>(state.rip));
+            } else if (state.fault == 3 || state.fault == 4) {
+                std::snprintf(message, sizeof(message), "Guest divide %s while executing 0x%llx",
+                    state.fault == 3 ? "by zero" : "quotient overflow", static_cast<unsigned long long>(state.rip));
+            } else {
+                std::snprintf(message, sizeof(message), "Guest memory %s fault at 0x%llx while executing 0x%llx",
+                    state.fault == 1 ? "read" : "write", static_cast<unsigned long long>(state.faultAddress), static_cast<unsigned long long>(state.rip));
+            }
             throw std::runtime_error(message);
         }
     }

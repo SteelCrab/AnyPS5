@@ -13,6 +13,10 @@ struct CpuState {
     GuestMemory* memory = nullptr;
     std::uint64_t fault = 0;
     std::uint64_t faultAddress = 0;
+    std::uint64_t fsBase = 0;
+    std::uint64_t gsBase = 0;
+    alignas(16) std::array<std::array<std::byte, 16>, 16> xmm{};
+    alignas(16) std::array<std::array<std::byte, 16>, 2> vectorScratch{};
 };
 
 struct HostCall {

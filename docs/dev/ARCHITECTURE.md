@@ -71,10 +71,15 @@ flowchart LR
 ## Experimental macOS path
 
 [`core/host/arm64`](../../core/host/arm64) maps static ELF segments into checked guest memory,
-decodes a subset of x86-64 integer instructions, and emits ARM64 basic blocks into an Apple
+decodes a subset of x86-64 integer and SSE/SSE2 instructions, and emits ARM64 basic blocks into an Apple
 Silicon JIT arena. Guest branches return to the CPU dispatcher, which caches translated blocks.
 Guest code bytes are data and are never executed directly. Native callback bindings translate
 integer arguments from the guest SysV registers and stack into an ARM64 C++ call.
+Partial integer registers preserve their untouched bytes. Packed SSE integers, vector moves,
+bitwise operations and shuffles execute as NEON instructions. Checked scalar/vector memory
+helpers enforce guest permissions before register or memory writeback. Full-width division
+uses a native ARM64 helper for the double-width dividend and checks quotient range before
+writing the guest result. Configured FS/GS bases are guest addresses, not host TLS pointers.
 
 [`core/host/metal`](../../core/host/metal) converts the shader recompiler's SPIR-V to MSL and
 uses Metal directly for GPU compilation and commands. The CPU-to-Metal test exercises a guest

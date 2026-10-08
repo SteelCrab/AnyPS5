@@ -6,10 +6,17 @@
 namespace AnyPS5::Arm64 {
 
 enum class Operation : std::uint8_t {
-    Move, Lea, Exchange, Add, Subtract, And, Or, Xor, Compare, Test, Increment, Decrement,
+    Move, MoveSigned, SignHigh, Lea, Exchange, Add, AddCarry, Subtract, SubtractBorrow,
+    And, Or, Xor, Compare, Test, Increment, Decrement, Negate, Not,
+    ShiftLeft, ShiftRight, ShiftArithmetic, RotateLeft, RotateRight,
+    Multiply, MultiplyImmediate, MultiplyUnsignedWide, MultiplySignedWide, DivideUnsigned, DivideSigned,
+    ConditionalMove, SetCondition,
+    VectorMove, VectorAnd, VectorAndNot, VectorOr, VectorXor, VectorAdd, VectorSubtract,
+    VectorEqual, VectorGreater, VectorMultiply, VectorShuffle, MoveToVector, MoveFromVector,
     Push, Pop, Jump, ConditionalJump, Call, Return, Nop
 };
 enum class OperandKind { Register, Immediate, Memory };
+enum class Segment { None, Fs, Gs };
 
 struct Operand {
     OperandKind kind = OperandKind::Immediate;
@@ -20,16 +27,22 @@ struct Operand {
     std::uint8_t scale = 0;
     std::int64_t displacement = 0;
     bool ripRelative = false;
+    bool highByte = false;
+    bool address32 = false;
+    Segment segment = Segment::None;
 };
 
 struct Instruction {
     Operation operation;
     Operand destination;
     Operand source;
+    Operand extra;
     std::uint8_t width = 32;
+    std::uint8_t sourceWidth = 0;
     std::uint8_t condition = 0;
     std::uint8_t size = 0;
     std::uint64_t address = 0;
+    bool aligned = false;
     [[nodiscard]] bool TerminatesBlock() const;
 };
 

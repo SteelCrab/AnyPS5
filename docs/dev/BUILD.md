@@ -67,6 +67,16 @@ memory faults, native integer callbacks, and static ELF loading. `arm64_metal` c
 x86-64 guest calls through the ARM64 callback bridge to Metal compute and RDNA rendering,
 with results read back by the guest. It requires GPU access and has the `gpu` label.
 
+`arm64_integer` checks narrow registers, arithmetic flags, shifts, rotates, conditional writes,
+stack faults and segmented addresses. `arm64_wide_integer` compares MUL/IMUL/DIV/IDIV with
+an arbitrary-precision reference. `arm64_vector` compares native SSE/SSE2-to-NEON operations
+with scalar lanes and checks vector memory faults.
+`arm64_compiled_kernel` builds the same C source for native ARM64 and x86-64 ELF at O0/O2/O3,
+then compares execution results, including compiler-generated SSE2. It needs an ELF LLD tool
+(`ld.lld` or `rust-lld`); install it with `brew install lld` or supply
+`-DANYPS5_ELF_LINKER=/absolute/path/to/ld.lld`. This test is omitted with a configure message
+when LLD is unavailable. LLD is only a test build tool; the runtime does not link to it.
+
 CPU executables are ad-hoc signed with hardened runtime and the
 [`allow-jit` entitlement](https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.security.cs.allow-jit)
 by default. This uses local `codesign` without a signing certificate. Set

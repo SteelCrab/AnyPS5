@@ -118,9 +118,20 @@ build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf 100000
 
 The optional positive instruction budget defaults to 1000000. Common register, immediate and
 ModRM forms are supported in the current CPU subset:
-32/64-bit MOV, LEA, register XCHG, ADD, SUB, AND, OR, XOR, CMP, TEST, INC, DEC, 64-bit PUSH/POP, direct and
-indirect JMP/CALL, all 16 Jcc conditions, RET and NOP. Memory operands support base/index/scale,
-signed displacements, and RIP-relative addressing. Unsupported instructions report the guest
+8/16/32/64-bit MOV, register XCHG, ADD, ADC, SUB, SBB, AND, OR, XOR, CMP, TEST, INC, DEC,
+NEG, NOT, SHL, SHR, SAR, ROL and ROR; MOVSX/MOVZX/MOVSXD, accumulator sign extension,
+MUL/IMUL/DIV/IDIV, LEA, CMOVcc, SETcc, 16/64-bit PUSH/POP, direct and indirect JMP/CALL,
+all 16 Jcc conditions, 64-bit RET and NOP. Memory operands support base/index/scale,
+signed displacements, RIP/EIP-relative addressing, 32-bit address truncation and configured
+FS/GS bases. Divide by zero and quotient overflow stop before register writeback.
+
+The SSE/SSE2 subset uses ARM64 NEON: MOVUPS/MOVUPD/MOVAPS/MOVAPD, MOVDQA/MOVDQU,
+scalar-register MOVD/MOVQ transfers, packed bitwise operations, PADDB/W/D/Q, PSUBB/W/D/Q,
+PCMPEQB/W/D, PCMPGTB/W/D, PMULLW and PSHUFD. All 16 XMM registers are available.
+Aligned vector memory forms require 16-byte alignment. Floating-point arithmetic, scalar
+floating-point moves, MMX and AVX remain unsupported.
+
+Unsupported instructions report the guest
 address and stop. Dynamic imports, an ELF interpreter, TLS, and writable executable guest
 segments fail before execution. The integer callback API provides six SysV integer arguments,
 guest stack arguments, a checked guest-memory interface, and an integer return. It is not a

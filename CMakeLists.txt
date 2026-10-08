@@ -121,6 +121,21 @@ if(BUILD_TESTING)
                 ${CMAKE_CURRENT_SOURCE_DIR}/core/host/arm64/tests/test_runner.py
                 $<TARGET_FILE:anyps5_arm64_run> $<TARGET_FILE:arm64_cpu_tests>)
             set_tests_properties(arm64_runner PROPERTIES TIMEOUT 120)
+            add_test(NAME arm64_wide_integer COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/core/host/arm64/tests/test_integer_wide.py
+                $<TARGET_FILE:arm64_integer_tests>)
+            set_tests_properties(arm64_wide_integer PROPERTIES TIMEOUT 120)
+            file(GLOB anyps5RustLinkerPaths "$ENV{HOME}/.rustup/toolchains/*/lib/rustlib/aarch64-apple-darwin/bin")
+            find_program(ANYPS5_ELF_LINKER NAMES ld.lld rust-lld
+                HINTS /opt/homebrew/opt/lld/bin /opt/homebrew/opt/llvm/bin ${anyps5RustLinkerPaths})
+            if(ANYPS5_ELF_LINKER)
+                add_test(NAME arm64_compiled_kernel COMMAND ${Python3_EXECUTABLE}
+                    ${CMAKE_CURRENT_SOURCE_DIR}/core/host/arm64/tests/test_compiled_kernel.py
+                    $<TARGET_FILE:anyps5_arm64_run> ${CMAKE_C_COMPILER} ${ANYPS5_ELF_LINKER})
+                set_tests_properties(arm64_compiled_kernel PROPERTIES TIMEOUT 120)
+            else()
+                message(STATUS "LLD not found; compiled x86-64 integer kernel test is unavailable")
+            endif()
         endif()
     endif()
 endif()

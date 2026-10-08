@@ -3,7 +3,7 @@
 Tool for automatic executables porting to Linux and Windows.
 
 macOS builds native ARM64 host tools, an experimental x86-64 to ARM64 CPU translator, and a
-direct Metal shader backend. The CPU runner executes a limited integer instruction set from
+direct Metal shader backend. The CPU runner executes a limited integer and SSE/SSE2 instruction set from
 static ELF images. Game execution is not implemented; see [macOS usage](docs/user/USAGE.md#mac-apple-silicon).
 
 Includes a [relinker](core/relinker) that converts executable to the target system's native format and implementations of [system prx libraries](core/libs/prx) suitable for dynamic linking. No emulation or separate runtime process.
