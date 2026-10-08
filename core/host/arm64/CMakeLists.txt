@@ -1,4 +1,4 @@
-add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp NativeKernel.cpp NativeThreads.cpp NativeMath.cpp
+add_library(anyps5_arm64 STATIC GuestMemory.cpp ElfImage.cpp X64Decoder.cpp Arm64Translator.cpp Cpu.cpp NativeLibc.cpp NativeFormatting.cpp NativeScanning.cpp NativeKernel.cpp NativeThreads.cpp NativeMath.cpp NativePosix.cpp NativeLocale.cpp
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/src/x86/X64InstructionDecoder.cpp")
 target_include_directories(anyps5_arm64 PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" PRIVATE
     "${PROJECT_SOURCE_DIR}/core/relinker/codegen/include"
@@ -27,6 +27,16 @@ add_executable(anyps5_arm64_run Main.cpp)
 target_link_libraries(anyps5_arm64_run PRIVATE anyps5_native_video)
 anyps5_sign_jit(anyps5_arm64_run)
 if(BUILD_TESTING)
+    add_test_executable(arm64_locale_tests tests/NativeLocaleTests.cpp)
+    target_link_libraries(arm64_locale_tests PRIVATE anyps5_arm64)
+    anyps5_sign_jit(arm64_locale_tests)
+    add_test(NAME arm64_locale COMMAND arm64_locale_tests)
+    set_tests_properties(arm64_locale PROPERTIES TIMEOUT 30)
+    add_test_executable(arm64_posix_tests tests/NativePosixTests.cpp)
+    target_link_libraries(arm64_posix_tests PRIVATE anyps5_arm64)
+    anyps5_sign_jit(arm64_posix_tests)
+    add_test(NAME arm64_posix COMMAND arm64_posix_tests)
+    set_tests_properties(arm64_posix PROPERTIES TIMEOUT 30)
     add_test_executable(arm64_math_tests tests/NativeMathTests.cpp)
     target_link_libraries(arm64_math_tests PRIVATE anyps5_arm64)
     target_compile_options(arm64_math_tests PRIVATE -ffp-exception-behavior=strict)

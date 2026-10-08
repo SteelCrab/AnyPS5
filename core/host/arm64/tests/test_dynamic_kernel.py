@@ -32,6 +32,8 @@ class DynamicKernelTests(unittest.TestCase):
                     result = self.command([RUNNER, elf])
                     self.assertIn('guest returned 0x2a', result.stdout)
                     self.assertEqual(elf.read_bytes(), original)
+                    with_arguments = self.command([RUNNER, elf, '1000000', '--', 'alpha', 'share ware'])
+                    self.assertIn('guest returned 0x2a', with_arguments.stdout)
                     count = re.search(r'(\d+) instructions', result.stdout)
                     self.assertIsNotNone(count, result.stdout)
                     exhausted = subprocess.run([str(RUNNER), str(elf), str(int(count.group(1)) - 1)],

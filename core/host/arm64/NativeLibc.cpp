@@ -1,5 +1,6 @@
 #include "NativeLibc.hpp"
 #include "NativeFormatting.hpp"
+#include "NativeScanning.hpp"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -15,13 +16,46 @@
 #include <string>
 #include <system_error>
 #include <type_traits>
+#include <xlocale.h>
 
 namespace AnyPS5::Arm64 {
+
+struct NativeStreamDescriptor {
+    int native = -1;
+    int guest = -1;
+    ~NativeStreamDescriptor() { if (native >= 0) ::close(native); }
+};
 
 namespace {
 
 constexpr std::uint64_t functionBase = 0x700000000;
 constexpr std::uint64_t globalBase = 0x710000000;
+
+std::FILE* stream(const std::shared_ptr<NativeStreamDescriptor>& descriptor, bool readable, bool writable) {
+    return ::funopen(descriptor.get(), readable ? +[](void* context, char* bytes, int count) -> int {
+        return static_cast<int>(::read(static_cast<NativeStreamDescriptor*>(context)->native, bytes, static_cast<std::size_t>(count)));
+    } : nullptr, writable ? +[](void* context, const char* bytes, int count) -> int {
+        return static_cast<int>(::write(static_cast<NativeStreamDescriptor*>(context)->native, bytes, static_cast<std::size_t>(count)));
+    } : nullptr, +[](void* context, fpos_t offset, int origin) -> fpos_t {
+        return ::lseek(static_cast<NativeStreamDescriptor*>(context)->native, offset, origin);
+    }, +[](void* context) -> int {
+        auto& native = static_cast<NativeStreamDescriptor*>(context)->native;
+        if (native < 0) { errno = EBADF; return EOF; }
+        const auto result = ::close(native);
+        native = -1;
+        return result;
+    });
+}
+
+class ThreadLocale {
+public:
+    explicit ThreadLocale(locale_t locale) : previous(locale ? ::uselocale(locale) : nullptr) {
+        if (locale && !previous) throw std::runtime_error("Cannot activate guest libc locale");
+    }
+    ~ThreadLocale() { if (previous) ::uselocale(previous); }
+private:
+    locale_t previous;
+};
 
 void range(const GuestMemory& memory, std::uint64_t address, std::size_t size, std::uint32_t permissions) {
     if (!memory.Contains(address, size, permissions)) throw std::runtime_error("Native libc argument is outside permitted guest memory");
@@ -60,6 +94,12 @@ void writeString(GuestMemory& memory, std::uint64_t address, const std::basic_st
 std::uint64_t integer(int value) { return static_cast<std::uint64_t>(static_cast<std::int64_t>(value)); }
 
 std::uint64_t allocate(const HostCall& call, void* context) { return static_cast<NativeLibc*>(context)->Allocate(call.memory, call.arguments[0]); }
+std::uint64_t alignedAllocate(const HostCall& call, void* context) {
+    auto& libc = *static_cast<NativeLibc*>(context);
+    const auto alignment = call.arguments[0];
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0 || call.arguments[1] % alignment != 0) { libc.SetError(call.memory, 22); return 0; }
+    return libc.AllocateAligned(call.memory, call.arguments[1], alignment);
+}
 std::uint64_t release(const HostCall& call, void* context) {
     static_cast<NativeLibc*>(context)->Free(call.memory, call.arguments[0]);
     return 0;
@@ -327,13 +367,19 @@ struct Function {
 template<FormatOutput TOutput, bool TVaList>
 std::uint64_t print(const HostCall& call, void* context) { return formatOutput(call, *static_cast<NativeLibc*>(context), TOutput, TVaList); }
 
+template<ScanInput TInput, bool TVaList>
+std::uint64_t scan(const HostCall& call, void* context) { return scanInput(call, *static_cast<NativeLibc*>(context), TInput, TVaList); }
+
 const auto functions = std::to_array<Function>({
+    {"sscanf", scan<ScanInput::String, false>}, {"vsscanf", scan<ScanInput::String, true>},
+    {"fscanf", scan<ScanInput::File, false>}, {"vfscanf", scan<ScanInput::File, true>},
+    {"scanf", scan<ScanInput::Standard, false>}, {"vscanf", scan<ScanInput::Standard, true>},
     {"printf", print<FormatOutput::Standard, false>}, {"vprintf", print<FormatOutput::Standard, true>},
     {"fprintf", print<FormatOutput::File, false>}, {"vfprintf", print<FormatOutput::File, true>},
     {"sprintf", print<FormatOutput::Buffer, false>}, {"vsprintf", print<FormatOutput::Buffer, true>},
     {"snprintf", print<FormatOutput::BoundedBuffer, false>}, {"vsnprintf", print<FormatOutput::BoundedBuffer, true>},
     {"asprintf", print<FormatOutput::AllocatedBuffer, false>}, {"vasprintf", print<FormatOutput::AllocatedBuffer, true>},
-    {"malloc", allocate}, {"calloc", allocateZero}, {"realloc", resize}, {"free", release},
+    {"malloc", allocate}, {"calloc", allocateZero}, {"realloc", resize}, {"free", release}, {"aligned_alloc", alignedAllocate},
     {"memcpy", copy}, {"memmove", copy}, {"memset", fill}, {"memcmp", compareBytes}, {"memchr", findByte},
     {"strlen", length<char>}, {"strnlen", boundedLength}, {"wcslen", length<wchar_t>},
     {"strcmp", compareStrings<char, false, false>}, {"strncmp", compareStrings<char, true, false>},
@@ -361,7 +407,12 @@ const auto functions = std::to_array<Function>({
     {"fputs", putString}, {"fgets", getString},
     {"feof", +[](const HostCall& call, void* context) { return integer(std::feof(static_cast<NativeLibc*>(context)->File(call.arguments[0]))); }},
     {"ferror", +[](const HostCall& call, void* context) { return integer(std::ferror(static_cast<NativeLibc*>(context)->File(call.arguments[0]))); }},
-    {"fileno", +[](const HostCall& call, void* context) { return integer(::fileno(static_cast<NativeLibc*>(context)->File(call.arguments[0]))); }},
+    {"fileno", +[](const HostCall& call, void* context) {
+        auto& libc = *static_cast<NativeLibc*>(context);
+        const auto result = libc.FileDescriptor(call.arguments[0]);
+        if (result < 0) libc.SetError(call.memory, 9);
+        return integer(result);
+    }},
     {"ungetc", +[](const HostCall& call, void* context) -> std::uint64_t {
         auto& libc = *static_cast<NativeLibc*>(context);
         const auto result = std::ungetc(static_cast<int>(call.arguments[0]), libc.File(call.arguments[1]));
@@ -370,14 +421,19 @@ const auto functions = std::to_array<Function>({
         return integer(result);
     }},
     {"puts", +[](const HostCall& call, void* context) {
+        auto& libc = *static_cast<NativeLibc*>(context);
         const auto string = readString<char>(call.memory, call.arguments[0]);
-        const auto result = std::puts(string.c_str());
-        if (result == EOF) static_cast<NativeLibc*>(context)->SetError(call.memory, errno);
+        auto* file = libc.File(libc.StandardStream(1));
+        const auto result = std::fputs(string.c_str(), file) == EOF || std::fputc('\n', file) == EOF ? EOF : 0;
+        if (result == EOF) libc.SetError(call.memory, errno);
+        libc.SyncFile(call.memory, libc.StandardStream(1));
         return integer(result);
     }},
     {"putchar", +[](const HostCall& call, void* context) {
-        const auto result = std::putchar(static_cast<int>(call.arguments[0]));
-        if (result == EOF) static_cast<NativeLibc*>(context)->SetError(call.memory, errno);
+        auto& libc = *static_cast<NativeLibc*>(context);
+        const auto result = std::fputc(static_cast<int>(call.arguments[0]), libc.File(libc.StandardStream(1)));
+        if (result == EOF) libc.SetError(call.memory, errno);
+        libc.SyncFile(call.memory, libc.StandardStream(1));
         return integer(result);
     }},
     {"__error", +[](const HostCall& call, void* context) { return static_cast<NativeLibc*>(context)->ErrorAddress(call.memory); }}
@@ -404,7 +460,16 @@ void NativeLibc::Bind(Cpu& cpu, GuestMemory& memory) {
     const std::array<std::FILE*, 3> standard{stdin, stdout, stderr};
     for (std::size_t i = 0; i < standard.size(); ++i) {
         const auto address = globalBase + 0x100 + i * 0x200;
-        streams.emplace(address, Stream{standard[i], false});
+        auto descriptor = std::make_shared<NativeStreamDescriptor>();
+        const auto native = ::dup(::fileno(standard[i]));
+        if (native < 0) throw std::runtime_error("Cannot duplicate a guest standard file descriptor");
+        descriptor->native = native;
+        descriptor->guest = static_cast<int>(i);
+        auto* file = stream(descriptor, i == 0, i != 0);
+        if (!file) throw std::runtime_error("Cannot initialize a guest standard stream");
+        try { streams.emplace(address, Stream{file, false, descriptor}); }
+        catch (...) { std::fclose(file); throw; }
+        std::setvbuf(file, nullptr, i == 2 ? _IONBF : _IOLBF, 0);
         writeBytes(memory, globalBase + 16 + i * 8, std::as_bytes(std::span(&address, 1)));
         SyncFile(memory, address);
     }
@@ -431,6 +496,7 @@ void NativeLibc::Attach(Cpu& cpu, GuestMemory& memory) {
 
 std::uint64_t NativeLibc::Invoke(const HostCall& call, HostFunction function) {
     std::lock_guard lock(mutex);
+    const ThreadLocale scope(activeLocale);
     return function(call, this);
 }
 
@@ -449,16 +515,22 @@ std::uint64_t NativeLibc::ErrorAddress(GuestMemory& memory) const {
 }
 
 std::uint64_t NativeLibc::Allocate(GuestMemory& memory, std::size_t size) {
+    return AllocateAligned(memory, size, 16);
+}
+
+std::uint64_t NativeLibc::AllocateAligned(GuestMemory& memory, std::size_t size, std::size_t alignment) {
     std::lock_guard lock(mutex);
+    if (alignment == 0 || (alignment & (alignment - 1)) != 0) { SetError(memory, 22); return 0; }
     const auto mapped = std::max<std::size_t>(size, 1);
     constexpr std::uint64_t heapEnd = 0x700000000000;
-    if (nextAllocation > heapEnd - 16 || mapped > heapEnd - nextAllocation - 16) { SetError(memory, 12); return 0; }
-    const auto address = nextAllocation;
+    if (alignment - 1 > heapEnd - nextAllocation) { SetError(memory, 12); return 0; }
+    const auto address = (nextAllocation + alignment - 1) & ~static_cast<std::uint64_t>(alignment - 1);
+    if (address > heapEnd - 16 || mapped > heapEnd - address - 16) { SetError(memory, 12); return 0; }
     try { allocations.emplace(address, mapped); memory.Map(address, mapped, Read | Write); }
     catch (const std::bad_alloc&) { allocations.erase(address); SetError(memory, 12); return 0; }
     catch (const std::system_error&) { allocations.erase(address); SetError(memory, 12); return 0; }
     catch (...) { allocations.erase(address); throw; }
-    nextAllocation += (mapped + 15) & ~std::uint64_t{15};
+    nextAllocation = address + ((mapped + 15) & ~std::uint64_t{15});
     return address;
 }
 
@@ -494,20 +566,30 @@ void NativeLibc::SetError(GuestMemory& memory, int error) const {
 
 NativeLibc::~NativeLibc() {
     for (const auto& [address, stream] : streams) {
-        if (stream.owned) std::fclose(stream.file);
+        std::fclose(stream.file);
     }
 }
 
 std::uint64_t NativeLibc::Open(GuestMemory& memory, const char* path, const char* mode) {
     std::lock_guard lock(mutex);
+    auto descriptor = std::make_shared<NativeStreamDescriptor>();
     auto* file = std::fopen(path, mode);
+    if (!file) { SetError(memory, errno); return 0; }
+    const auto native = ::dup(::fileno(file));
+    const auto error = errno;
+    std::fclose(file);
+    if (native < 0) { SetError(memory, error); return 0; }
+    descriptor->native = native;
+    descriptor->guest = native;
+    const bool both = std::strchr(mode, '+') != nullptr;
+    file = stream(descriptor, mode[0] == 'r' || both, mode[0] != 'r' || both);
     if (!file) { SetError(memory, errno); return 0; }
     const auto address = nextStream;
     bool mapped = false;
     try {
         memory.Map(address, 0x200, Read | Write);
         mapped = true;
-        streams.emplace(address, Stream{file, true});
+        streams.emplace(address, Stream{file, true, descriptor});
     } catch (...) {
         std::fclose(file);
         if (mapped) memory.Unmap(address);
@@ -524,7 +606,7 @@ int NativeLibc::Close(GuestMemory& memory, std::uint64_t address) {
     if (found == streams.end()) throw std::runtime_error("Native libc FILE handle is invalid");
     const auto result = std::fclose(found->second.file);
     if (result != 0) SetError(memory, errno);
-    if (found->second.owned) memory.Unmap(address);
+    if (found->second.allocated) memory.Unmap(address);
     streams.erase(found);
     return result;
 }
@@ -541,11 +623,53 @@ void NativeLibc::SyncFile(GuestMemory& memory, std::uint64_t address) const {
     auto* file = File(address);
     const std::int32_t count = 0;
     const auto flags = static_cast<std::uint16_t>(0x12 | (std::feof(file) ? 0x20 : 0) | (std::ferror(file) ? 0x40 : 0));
-    const auto descriptor = static_cast<std::int16_t>(::fileno(file));
+    const auto descriptor = static_cast<std::int16_t>(FileDescriptor(address));
     writeBytes(memory, address + 8, std::as_bytes(std::span(&count, 1)));
     writeBytes(memory, address + 12, std::as_bytes(std::span(&count, 1)));
     writeBytes(memory, address + 16, std::as_bytes(std::span(&flags, 1)));
     writeBytes(memory, address + 18, std::as_bytes(std::span(&descriptor, 1)));
+}
+
+bool NativeLibc::HasDescriptor(int descriptor) const {
+    std::lock_guard lock(mutex);
+    return NativeDescriptor(descriptor) >= 0;
+}
+
+int NativeLibc::NativeDescriptor(int descriptor) const {
+    std::lock_guard lock(mutex);
+    for (const auto& [address, stream] : streams) if (stream.descriptor->guest == descriptor && stream.descriptor->native >= 0) return stream.descriptor->native;
+    return -1;
+}
+
+int NativeLibc::CloseDescriptor(int descriptor) {
+    std::lock_guard lock(mutex);
+    for (auto& [address, stream] : streams) {
+        if (stream.descriptor->guest != descriptor || stream.descriptor->native < 0) continue;
+        const auto result = ::close(stream.descriptor->native);
+        stream.descriptor->native = -1;
+        return result;
+    }
+    errno = EBADF;
+    return -1;
+}
+
+int NativeLibc::FileDescriptor(std::uint64_t address) const {
+    std::lock_guard lock(mutex);
+    const auto found = streams.find(address);
+    if (found == streams.end()) throw std::runtime_error("Native libc FILE handle is invalid");
+    return found->second.descriptor->native >= 0 ? found->second.descriptor->guest : -1;
+}
+
+std::uint64_t NativeLibc::StandardStream(std::size_t index) const {
+    if (index > 2) throw std::runtime_error("Native libc standard stream index is invalid");
+    return globalBase + 0x100 + index * 0x200;
+}
+
+std::unique_lock<std::recursive_mutex> NativeLibc::LockStreams() const { return std::unique_lock(mutex); }
+
+void NativeLibc::SetLocale(locale_t locale) {
+    std::lock_guard lock(mutex);
+    activeLocale = locale;
 }
 
 }

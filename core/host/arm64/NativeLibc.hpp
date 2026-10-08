@@ -7,8 +7,12 @@
 #include <unordered_map>
 #include <mutex>
 #include <thread>
+#include <locale.h>
+#include <memory>
 
 namespace AnyPS5::Arm64 {
+
+struct NativeStreamDescriptor;
 
 class NativeLibc {
 public:
@@ -22,6 +26,7 @@ public:
     [[nodiscard]] std::uint64_t Invoke(const HostCall& call, HostFunction function);
     [[nodiscard]] std::uint64_t ErrorAddress(GuestMemory& memory) const;
     [[nodiscard]] std::uint64_t Allocate(GuestMemory& memory, std::size_t size);
+    [[nodiscard]] std::uint64_t AllocateAligned(GuestMemory& memory, std::size_t size, std::size_t alignment);
     void Free(GuestMemory& memory, std::uint64_t address);
     [[nodiscard]] std::uint64_t Resize(GuestMemory& memory, std::uint64_t address, std::size_t size);
     void SetError(GuestMemory& memory, int error) const;
@@ -29,10 +34,18 @@ public:
     [[nodiscard]] int Close(GuestMemory& memory, std::uint64_t address);
     [[nodiscard]] std::FILE* File(std::uint64_t address) const;
     void SyncFile(GuestMemory& memory, std::uint64_t address) const;
+    [[nodiscard]] bool HasDescriptor(int descriptor) const;
+    [[nodiscard]] int NativeDescriptor(int descriptor) const;
+    [[nodiscard]] int CloseDescriptor(int descriptor);
+    [[nodiscard]] int FileDescriptor(std::uint64_t address) const;
+    [[nodiscard]] std::uint64_t StandardStream(std::size_t index) const;
+    [[nodiscard]] std::unique_lock<std::recursive_mutex> LockStreams() const;
+    void SetLocale(locale_t locale);
 private:
     struct Stream {
         std::FILE* file;
-        bool owned;
+        bool allocated;
+        std::shared_ptr<NativeStreamDescriptor> descriptor;
     };
     std::unordered_map<std::uint64_t, Stream> streams;
     std::unordered_map<std::uint64_t, std::size_t> allocations;
@@ -41,6 +54,7 @@ private:
     bool bound = false;
     GuestMemory* guestMemory = nullptr;
     mutable std::recursive_mutex mutex;
+    locale_t activeLocale = nullptr;
     mutable std::unordered_map<std::thread::id, std::uint64_t> errorCells;
     mutable std::uint64_t nextError = 0x710001000;
 };

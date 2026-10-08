@@ -82,7 +82,13 @@ keys/destructors, separate errno cells, a condition barrier and semaphores. It a
 joined/detached worker failure propagation and process teardown with a blocked detached worker.
 `arm64_math` checks XMM floating arguments/returns, mixed integer arguments, integer returns,
 signed zero, NaNs, domain/range errno and preservation of the host floating environment.
-`arm64_libc` also checks UTF-8 wide-string precision at a guest mapping boundary.
+`arm64_libc` also checks aligned allocations, UTF-8 wide-string precision at a guest mapping
+boundary, scanf integer/floating widths, suppression, character sets, wide strings, va_list
+exhaustion and retained file input. `arm64_posix` checks real file I/O, stat/dirent layouts,
+closed/reused FILE descriptors, isolated standard descriptors/environment, arguments, clocks,
+tokenization, guest comparator callbacks and cancelled sleep waits. `arm64_locale` checks
+locale isolation, incremental UTF-8, mapping-edge conversion, invalid encodings, non-BMP
+characters, bounded wide strings, formatted wide output, collation and broken-down time.
 
 `arm64_integer` checks narrow registers, arithmetic flags, shifts, rotates, conditional writes,
 stack faults and segmented addresses. `arm64_wide_integer` compares MUL/IMUL/DIV/IDIV with
@@ -95,7 +101,9 @@ then compares execution results, including compiler-generated SSE2. It needs an 
 when LLD is unavailable. `arm64_dynamic_kernel` uses the same linker to check dynamic ELF
 initialization, native libc calls, floating returns, compiler-generated va_list and cumulative
 instruction budgets and native math argument/return ABI at O0/O2/O3. LLD is only a test build
-tool; the runtime does not link to it.
+tool; the runtime does not link to it. The same fixture checks compiler-generated scanf
+register/stack arguments and va_list, guest-comparator sorting/search, private environment,
+argv with supplied CLI arguments, aligned allocation and incremental UTF-8 locale conversion.
 
 `arm64_video` runs x86-64 instructions through the ARM64 native VideoOut bridge and verifies
 pixels from the actual Metal window drawable and its completion event using kernel direct

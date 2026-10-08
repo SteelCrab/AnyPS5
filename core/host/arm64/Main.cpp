@@ -4,6 +4,8 @@
 #include "NativeVideoOut.hpp"
 #include "NativeThreads.hpp"
 #include "NativeMath.hpp"
+#include "NativePosix.hpp"
+#include "NativeLocale.hpp"
 #include <charconv>
 #include <cstdio>
 #include <cstring>
@@ -14,22 +16,29 @@
 #include <string_view>
 
 int main(int argc, char** argv) {
-    if (argc < 2 || argc > 3) {
-        std::fprintf(stderr, "usage: anyps5_arm64_run <x86-64.elf> [instruction-budget]\n");
+    if (argc < 2) {
+        std::fprintf(stderr, "usage: anyps5_arm64_run <x86-64.elf> [instruction-budget] [-- guest-argument ...]\n");
         return 1;
     }
     try {
         std::uint64_t budget = 1000000;
-        if (argc == 3) {
+        int argument = 2;
+        if (argument < argc && std::string_view(argv[argument]) != "--") {
             const std::string_view value(argv[2]);
             const auto parsed = std::from_chars(value.data(), value.data() + value.size(), budget);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || budget == 0) throw std::runtime_error("Instruction budget must be a positive integer");
+            ++argument;
         }
+        if (argument < argc && std::string_view(argv[argument++]) != "--") throw std::runtime_error("Guest arguments must follow --");
+        std::vector<std::string> guestArguments{argv[1]};
+        for (; argument < argc; ++argument) guestArguments.emplace_back(argv[argument]);
         std::ifstream input(argv[1], std::ios::binary);
         if (!input) throw std::runtime_error("Cannot open guest ELF");
         const std::string bytes{std::istreambuf_iterator<char>(input), {}};
         AnyPS5::Arm64::NativeLibc libc;
         AnyPS5::Arm64::NativeMath math(libc);
+        AnyPS5::Arm64::NativePosix posix(libc);
+        AnyPS5::Arm64::NativeLocale locale(libc, posix);
         AnyPS5::Arm64::NativeKernel kernel;
         AnyPS5::Arm64::NativeVideoOut video(kernel);
         AnyPS5::Arm64::ElfOptions options;
@@ -40,6 +49,10 @@ int main(int argc, char** argv) {
             if (threadResolved != 0) return threadResolved;
             const auto mathResolved = AnyPS5::Arm64::NativeMath::Resolve(symbol);
             if (mathResolved != 0) return mathResolved;
+            const auto posixResolved = AnyPS5::Arm64::NativePosix::Resolve(symbol);
+            if (posixResolved != 0) return posixResolved;
+            const auto localeResolved = AnyPS5::Arm64::NativeLocale::Resolve(symbol);
+            if (localeResolved != 0) return localeResolved;
             const auto kernelResolved = kernel.Resolve(symbol);
             return kernelResolved != 0 ? kernelResolved : video.Resolve(symbol);
         };
@@ -52,11 +65,14 @@ int main(int argc, char** argv) {
         state.registers[4] = stack + stackSize - 8;
         AnyPS5::Arm64::Cpu cpu(image.memory);
         libc.Bind(cpu, image.memory);
+        posix.SetArguments(image.memory, guestArguments);
+        posix.Bind(cpu);
+        locale.Bind(cpu, image.memory);
         kernel.Bind(cpu);
         video.Bind(cpu);
         math.Bind(cpu);
         AnyPS5::Arm64::NativeThreads threads(libc, image.memory, budget);
-        threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); math.Bind(threadCpu); }, [&] { kernel.Shutdown(); });
+        threads.SetBindings([&](auto& threadCpu) { kernel.Bind(threadCpu); video.Bind(threadCpu); math.Bind(threadCpu); posix.Bind(threadCpu); locale.Bind(threadCpu, image.memory); }, [&] { kernel.Shutdown(); posix.Shutdown(); });
         threads.Bind(cpu);
         const auto initialBudget = budget;
         const auto run = [&](std::uint64_t address) {

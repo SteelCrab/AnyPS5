@@ -204,9 +204,10 @@ std::uint64_t formatOutput(const HostCall& call, NativeLibc& libc, FormatOutput 
     auto arguments = vaList ? Arguments(call, read<VaList>(call.memory, call.arguments[formatIndex + 1])) : Arguments(call, formatIndex + 1);
     const auto formatted = format(call.memory, string<char>(call.memory, call.arguments[formatIndex]), arguments);
     if (output == FormatOutput::Standard || output == FormatOutput::File) {
-        auto* file = output == FormatOutput::Standard ? stdout : libc.File(call.arguments[0]);
+        const auto address = output == FormatOutput::Standard ? libc.StandardStream(1) : call.arguments[0];
+        auto* file = libc.File(address);
         const auto written = std::fwrite(formatted.data(), 1, formatted.size(), file);
-        if (output == FormatOutput::File) libc.SyncFile(call.memory, call.arguments[0]);
+        libc.SyncFile(call.memory, address);
         if (written != formatted.size()) { libc.SetError(call.memory, errno); return ~std::uint64_t{0}; }
     } else if (output == FormatOutput::BoundedBuffer) {
         const auto size = call.arguments[1];

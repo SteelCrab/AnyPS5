@@ -77,6 +77,13 @@ void testHeap() {
     int value = 0;
     require(fixture.memory.TryRead(error, std::as_writable_bytes(std::span(&value, 1))) && value == 12, "Guest calloc did not set ENOMEM");
     require(fixture.Call("malloc", {std::numeric_limits<std::uint64_t>::max()}) == 0, "Overflowing malloc succeeded");
+    for (const auto alignment : {1u, 16u, 64u, 16384u}) {
+        const auto aligned = fixture.Call("aligned_alloc", {alignment, 2 * alignment});
+        require(aligned != 0 && aligned % alignment == 0 && fixture.memory.Contains(aligned, 2 * alignment, Read | Write), "Guest aligned allocation has the wrong address or extent");
+        fixture.Call("free", {aligned});
+    }
+    require(fixture.Call("aligned_alloc", {3, 6}) == 0 && fixture.Call("aligned_alloc", {64, 65}) == 0, "Invalid aligned allocation succeeded");
+    require(fixture.memory.TryRead(error, std::as_writable_bytes(std::span(&value, 1))) && value == 22, "Invalid aligned allocation did not report EINVAL");
 }
 
 void testMemoryAndStrings() {
@@ -172,7 +179,7 @@ void testFloatingReturnAndFiles() {
     require(fixture.Call("fopen", {0x1000, 0x1100}) == 0, "Guest fopen did not report a missing file");
     const auto stdoutAddress = fixture.libc.Resolve({"__stdoutp", 1, 1, 8});
     std::uint64_t stream = 0;
-    require(fixture.memory.TryRead(stdoutAddress, std::as_writable_bytes(std::span(&stream, 1))) && fixture.libc.File(stream) == stdout, "Guest standard stream object was not initialized");
+    require(fixture.memory.TryRead(stdoutAddress, std::as_writable_bytes(std::span(&stream, 1))) && fixture.Call("fileno", {stream}) == 1, "Guest standard output did not retain descriptor 1");
 }
 
 void testFormatting() {
@@ -229,6 +236,69 @@ void testFormatting() {
     require(fixture.Call("snprintf", {0x1200, 32, 0x1000, 0x1ffc}) == 3 && fixture.Bytes(0x1200, 4) == std::vector<std::byte>{std::byte{0xe2}, std::byte{0x82}, std::byte{0xac}, {}}, "Wide precision did not emit one complete UTF-8 character");
 }
 
+void testScanning() {
+    Fixture fixture;
+    const auto value = [&]<class TValue>(std::uint64_t address) {
+        TValue result{};
+        require(fixture.memory.TryRead(address, std::as_writable_bytes(std::span(&result, 1))), "Could not read a scanned guest value");
+        return result;
+    };
+    fixture.String(0x1000, "%hhd %i %lf%n");
+    fixture.String(0x1100, " -12 0x2a 1.25 trailing");
+    require(fixture.Call("sscanf", {0x1100, 0x1000, 0x1200, 0x1210, 0x1220, 0x1230}) == 3, "Guest scanf numeric assignment count changed");
+    require(value.operator()<std::int8_t>(0x1200) == -12 && value.operator()<int>(0x1210) == 42 && value.operator()<double>(0x1220) == 1.25 && value.operator()<int>(0x1230) == 14, "Guest scanf integer widths, float pointer or input count changed");
+    fixture.String(0x1000, "%3[a-z] %*u %2c %s");
+    fixture.String(0x1100, "abc 123 XY metal");
+    fixture.String(0x1500, "abc");
+    fixture.String(0x1600, "metal");
+    require(fixture.Call("sscanf", {0x1100, 0x1000, 0x1200, 0x1300, 0x1400}) == 3 && fixture.Call("strcmp", {0x1200, 0x1500}) == 0 && fixture.Bytes(0x1300, 3) == std::vector<std::byte>{std::byte{'X'}, std::byte{'Y'}, {}} && fixture.Call("strcmp", {0x1400, 0x1600}) == 0, "Guest scanf scanset, suppression or non-terminated characters changed");
+    fixture.String(0x1000, "%[^]]]%n");
+    fixture.String(0x1100, "metal]x");
+    require(fixture.Call("sscanf", {0x1100, 0x1000, 0x1200, 0x1300}) == 1 && fixture.Call("strcmp", {0x1200, 0x1600}) == 0 && value.operator()<int>(0x1300) == 6, "Guest scanf negated character set or literal matching changed");
+    fixture.String(0x1000, "%llu %llu %llu");
+    fixture.String(0x1100, "111 222 333");
+    struct VaList { std::uint32_t general, vector; std::uint64_t stack, registers; } list{40, 48, 0x1400, 0x1300};
+    const std::uint64_t first = 0x1600, second = 0x1610, third = 0x1620;
+    require(fixture.memory.TryWrite(0x1500, std::as_bytes(std::span(&list, 1))) && fixture.memory.TryWrite(0x1328, std::as_bytes(std::span(&first, 1))) && fixture.memory.TryWrite(0x1400, std::as_bytes(std::span(&second, 1))) && fixture.memory.TryWrite(0x1408, std::as_bytes(std::span(&third, 1))), "Could not initialize scanf x86-64 va_list");
+    require(fixture.Call("vsscanf", {0x1100, 0x1000, 0x1500}) == 3 && value.operator()<std::uint64_t>(first) == 111 && value.operator()<std::uint64_t>(second) == 222 && value.operator()<std::uint64_t>(third) == 333, "Guest scanf va_list register exhaustion changed pointer argument order");
+    list.general = 49;
+    require(fixture.memory.TryWrite(0x1500, std::as_bytes(std::span(&list, 1))), "Could not initialize malformed scanf va_list");
+    rejects([&] { fixture.Call("vsscanf", {0x1100, 0x1000, 0x1500}); }, "va_list offsets");
+    fixture.String(0x1000, "%d");
+    fixture.String(0x1100, "bad");
+    require(fixture.Call("sscanf", {0x1100, 0x1000, 0x1200}) == 0, "Scanf matching failure returned EOF");
+    fixture.String(0x1100, "");
+    require(fixture.Call("sscanf", {0x1100, 0x1000, 0x1200}) == UINT64_MAX, "Scanf empty input did not return EOF");
+    fixture.String(0x1000, "%*d%d");
+    fixture.String(0x1100, "1");
+    require(fixture.Call("sscanf", {0x1100, 0x1000, 0x1200}) == 0, "Scanf EOF after suppressed conversion changed its result");
+    fixture.String(0x1000, "%Lf");
+    rejects([&] { fixture.Call("sscanf", {0x1100, 0x1000, 0x1200}); }, "extended floating conversion");
+    require(std::setlocale(LC_CTYPE, "en_US.UTF-8") != nullptr, "Could not activate UTF-8 for wide scanf");
+    struct Locale { ~Locale() { std::setlocale(LC_CTYPE, "C"); } } locale;
+    fixture.String(0x1000, "%ls");
+    fixture.String(0x1100, "\xed\x95\x9c\xea\xb8\x80");
+    require(fixture.Call("sscanf", {0x1100, 0x1000, 0x1200}) == 1 && value.operator()<std::array<wchar_t, 3>>(0x1200) == std::array<wchar_t, 3>{L'\ud55c', L'\uae00', 0}, "Wide scanf did not convert Korean UTF-8 to 32-bit characters");
+    fixture.String(0x1000, "%d");
+    fixture.String(0x1100, "7");
+    rejects([&] { fixture.Call("sscanf", {0x1100, 0x1000, 0x1ffe}); }, "outside writable guest memory");
+    std::array<char, 64> pattern{};
+    std::strcpy(pattern.data(), "/tmp/anyps5-arm64-scanf-XXXXXX");
+    const auto descriptor = ::mkstemp(pattern.data());
+    require(descriptor >= 0, "Cannot create scanf test file");
+    ::close(descriptor);
+    struct Cleanup { const char* path; ~Cleanup() { ::unlink(path); } } cleanup{pattern.data()};
+    fixture.String(0x1000, pattern.data());
+    fixture.String(0x1100, "w+b");
+    const auto file = fixture.Call("fopen", {0x1000, 0x1100});
+    fixture.String(0x1200, "42x");
+    require(file != 0 && fixture.Call("fwrite", {0x1200, 1, 3, file}) == 3 && fixture.Call("fseek", {file, 0, SEEK_SET}) == 0, "Cannot initialize guest fscanf file");
+    fixture.String(0x1300, "%d");
+    require(fixture.Call("fscanf", {file, 0x1300, 0x1400}) == 1 && value.operator()<int>(0x1400) == 42 && fixture.Call("fgetc", {file}) == 'x', "Guest fscanf consumed a trailing file byte");
+    require(fixture.Call("fscanf", {file, 0x1300, 0x1400}) == UINT64_MAX && fixture.Call("feof", {file}) != 0, "Guest fscanf did not synchronize EOF state");
+    fixture.Call("fclose", {file});
+}
+
 }
 
 int main() {
@@ -238,6 +308,7 @@ int main() {
         testIntegersAndCharacters();
         testFloatingReturnAndFiles();
         testFormatting();
+        testScanning();
         std::puts("Native ARM64 libc guest allocation, memory, string and integer tests passed");
         return 0;
     } catch (const std::exception& error) {

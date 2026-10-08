@@ -116,10 +116,14 @@ syscalls and most game system imports remain unavailable.
 ```sh
 build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf
 build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf 100000
+build-macos/core/host/arm64/anyps5_arm64_run homebrew.elf 1000000 -- --datadir ./shareware
 ```
 
 The optional positive instruction budget defaults to 1000000 and includes initialization,
-the entry, finalization and native callback dispatch. Common register, immediate and
+the entry, finalization and native callback dispatch. Arguments after `--` are copied into
+guest memory and exposed by `getargc`/`getargv`; argv[0] is the supplied ELF path.
+Relative file paths use the runner's current directory. This does not supply the PS5 payload
+startup structure. Common register, immediate and
 ModRM forms are supported in the current CPU subset:
 8/16/32/64-bit MOV, register XCHG, ADD, ADC, SUB, SBB, AND, OR, XOR, CMP, TEST, INC, DEC,
 NEG, NOT, SHL, SHR, SAR, ROL and ROR; MOVSX/MOVZX/MOVSXD, accumulator sign extension,
@@ -143,9 +147,26 @@ invalidate native translations and memory stores end their current block.
 
 The callback API supplies six SysV integer arguments, stack arguments, checked guest memory
 and CpuState/XMM access. The native libc bridge implements heap/memory/string functions,
-character classification, integer and float/double parsing, basic stdio, and common printf
-formats. x86-64 va_list is decoded independently of the ARM64 host ABI. Positional and
-extended floating-point formats are unsupported. This remains a partial system-library ABI.
+character classification, aligned allocations, integer and float/double parsing, basic stdio,
+and common printf/scanf formats. Scanning includes numeric lengths, field widths, suppression,
+character sets, narrow/wide strings and `%n`. x86-64 va_list is decoded independently of the
+ARM64 host ABI. Positional, extended floating-point and wide scanf character-set formats are
+unsupported. This remains a partial system-library ABI.
+
+The POSIX bridge implements checked file descriptors, seek, stat/fstat, directory enumeration,
+file creation/removal/rename, current directory, clocks, sleeps, environment variables,
+tokenization and guest-comparator sorting/search. FILE descriptors and POSIX operations share
+the same file position. Closing a guest standard descriptor leaves the host descriptor open.
+The environment is private to the guest; putenv retains the guest buffer's live storage.
+Sleep waits stop during runtime teardown. Blocking descriptor/FILE I/O remains non-cancellable.
+Unsupported open flags and sysconf identifiers return errors.
+
+The locale bridge starts in C and uses a private native locale. Host-supported locale names
+can be selected without changing the host process locale. Empty locale selection reads the
+guest's LC_ALL, category and LANG variables. It supports incremental UTF-8, 32-bit wide
+characters, collation and broken-down time conversion. Locale changes also apply
+to native libc parsing and formatting. Guest mbstate_t is opaque 128-byte conversion storage.
+Other guest C++ locale internals remain unsupported.
 The native math bridge supplies float/double trigonometric, logarithmic, exponential,
 rounding and scaling functions. It converts domain/range exceptions to guest errno.
 It uses the ARM64 host math library; x87 and guest MXCSR control remain unsupported.

@@ -14,6 +14,21 @@ extern double exp2(double value);
 extern double scalbn(double value, int exponent);
 extern float cosf(float value);
 extern long lround(double value);
+extern void* aligned_alloc(unsigned long alignment, unsigned long size);
+extern int sscanf(const char* input, const char* format, ...);
+extern int vsscanf(const char* input, const char* format, va_list arguments);
+extern void qsort(void* base, unsigned long count, unsigned long size, int (*compare)(const void*, const void*));
+extern void* bsearch(const void* key, const void* base, unsigned long count, unsigned long size, int (*compare)(const void*, const void*));
+extern int getargc(void);
+extern const char** getargv(void);
+extern int setenv(const char* name, const char* value, int overwrite);
+extern char* getenv(const char* name);
+extern int unsetenv(const char* name);
+extern char* getcwd(char* output, unsigned long size);
+extern long sysconf(int name);
+extern char* setlocale(int category, const char* name);
+extern unsigned long mbrtowc(unsigned int* output, const char* input, unsigned long count, void* state);
+extern int __mb_cur_max;
 
 unsigned long initialized;
 
@@ -27,6 +42,48 @@ int Format(char* output, unsigned long size, const char* format, ...) {
     int result = vsnprintf(output, size, format, arguments);
     va_end(arguments);
     return result;
+}
+
+int Scan(const char* input, const char* format, ...) {
+    va_list arguments;
+    va_start(arguments, format);
+    int result = vsscanf(input, format, arguments);
+    va_end(arguments);
+    return result;
+}
+
+int Compare(const void* left, const void* right) {
+    return *(const int*)left - *(const int*)right;
+}
+
+int Posix(void) {
+    const char** arguments = getargv();
+    if ((getargc() != 1 && getargc() != 3) || !arguments || !arguments[0] || strlen(arguments[0]) == 0 || arguments[getargc()] != 0) return 14;
+    if (getargc() == 3 && (arguments[1][0] != 'a' || arguments[2][5] != ' ')) return 15;
+    if (setenv("ANYPS5_DYNAMIC_ENV", "guest", 1) != 0) return 16;
+    const char* environment = getenv("ANYPS5_DYNAMIC_ENV");
+    if (!environment || environment[0] != 'g' || unsetenv("ANYPS5_DYNAMIC_ENV") != 0 || getenv("ANYPS5_DYNAMIC_ENV") != 0) return 17;
+    char* directory = getcwd(0, 0);
+    if (!directory || strlen(directory) == 0 || sysconf(47) != 16384) return 18;
+    free(directory);
+    void* aligned = aligned_alloc(64, 128);
+    if (!aligned || ((unsigned long)aligned & 63) != 0) return 19;
+    free(aligned);
+    int numbers[5] = {9, -2, 5, 0, 3};
+    qsort(numbers, 5, sizeof(int), Compare);
+    int key = 5;
+    if (numbers[0] != -2 || numbers[4] != 9 || bsearch(&key, numbers, 5, sizeof(int), Compare) != &numbers[3]) return 20;
+    int a, b, c, d, e, f, count = 0;
+    if (sscanf("1 2 3 4 5 6", "%d%d%d%d%d%d%n", &a, &b, &c, &d, &e, &f, &count) != 6 || a != 1 || f != 6 || count != 11) return 21;
+    if (Scan("7 8 9 10 11 12", "%d%d%d%d%d%d", &a, &b, &c, &d, &e, &f) != 6 || a != 7 || f != 12) return 22;
+    union { double value; unsigned long bits; } floating;
+    if (sscanf("1.25", "%lf", &floating.value) != 1 || floating.bits != 0x3ff4000000000000UL) return 23;
+    if (!setlocale(2, "en_US.UTF-8") || __mb_cur_max < 4) return 24;
+    unsigned long state[16] = {0};
+    unsigned int character = 0;
+    if (mbrtowc(&character, "\xe2", 1, state) != (unsigned long)-2 || mbrtowc(&character, "\x82\xac", 2, state) != 2 || character != 0x20ac) return 25;
+    if (sscanf("\xf0\x9f\x99\x82", "%lc", &character) != 1 || character != 0x1f642) return 26;
+    return 0;
 }
 
 unsigned long GuestMain(void) {
@@ -62,5 +119,7 @@ unsigned long GuestMain(void) {
     if (printed != 15 || formatted[0] != 'M' || formatted[14] != '3' || formatted[15] != 0) return 8;
     if (snprintf(formatted, sizeof(formatted), "%04x", 42) != 4 || formatted[3] != 'a') return 9;
     free(bytes);
+    int posix = Posix();
+    if (posix != 0) return (unsigned long)posix;
     return value + initialized;
 }
