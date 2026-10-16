@@ -18,6 +18,9 @@
 #include "prx/libc/include/General.hpp"
 
 extern "C" void* APS5_VABI dlopen_nid_postfix(const char* path, int flags);
+#ifdef __EMSCRIPTEN__
+extern "C" int APS5_VABI sceKernelGetModuleInfoForUnwind(std::uint64_t addr, int flags, ModuleInfoForUnwind* info);
+#endif
 
 namespace {
 
@@ -120,6 +123,8 @@ bool fillModuleInfoForUnwind(std::uint64_t addr, ModuleInfoForUnwind* info) {
         gRegions.insert_or_assign(begin, std::move(region));
     }
     return true;
+#elif defined(__EMSCRIPTEN__)
+    return sceKernelGetModuleInfoForUnwind(addr, 0, info) == 0;
 #else
     const auto mapping = HostMapping::Find(addr, "sceSysmoduleGetModuleInfoForUnwind");
     if (!mapping) {
