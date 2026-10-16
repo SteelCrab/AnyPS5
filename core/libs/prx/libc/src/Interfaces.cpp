@@ -5,7 +5,9 @@
 #include <iphlpapi.h>
 #else
 #include <ifaddrs.h>
+#ifdef __linux__
 #include <linux/if_link.h>
+#endif
 #include <net/if.h>
 #include <net/if_arp.h>
 #include <netinet/in.h>
@@ -160,6 +162,14 @@ int HostEntries(std::vector<Entry>& entries) {
     return 0;
 }
 #else
+struct HostInterface {
+    std::string name;
+    bool linked = false;
+    Entry link;
+    std::vector<Entry> addresses;
+};
+
+#ifdef __linux__
 constexpr std::uint8_t guestLinkFamily = 18;
 constexpr std::size_t guestLinkNameArea = 8 + 16;
 constexpr std::size_t guestLinkMinimum = 54;
@@ -171,13 +181,6 @@ constexpr std::uint8_t guestLinkStateDown = 1;
 constexpr std::uint8_t guestLinkStateUp = 2;
 constexpr std::size_t guestInterfaceDataSize = 152;
 constexpr unsigned int hostLowerUp = 0x10000;
-
-struct HostInterface {
-    std::string name;
-    bool linked = false;
-    Entry link;
-    std::vector<Entry> addresses;
-};
 
 template<typename TValue>
 void Store(std::vector<std::uint8_t>& bytes, std::size_t offset, TValue value) {
@@ -253,6 +256,7 @@ std::vector<std::uint8_t> GuestInterfaceData(const std::string& name, unsigned i
     }
     return data;
 }
+#endif
 
 std::uint32_t InterfaceFlags(unsigned int host) {
     constexpr std::pair<unsigned int, std::uint32_t> flags[] = {
@@ -288,6 +292,7 @@ int HostEntries(std::vector<Entry>& entries) {
     try {
         for (auto* item = host; item; item = item->ifa_next) {
             if (!item->ifa_addr) continue;
+#ifdef __linux__
             if (item->ifa_addr->sa_family == AF_PACKET) {
                 const auto& link = *reinterpret_cast<const sockaddr_ll*>(item->ifa_addr);
                 HostInterface& owner = interfaceFor(CheckedName(item->ifa_name));
@@ -302,6 +307,7 @@ int HostEntries(std::vector<Entry>& entries) {
                 owner.linked = true;
                 continue;
             }
+#endif
             if (item->ifa_addr->sa_family != AF_INET && item->ifa_addr->sa_family != AF_INET6) continue;
             if (!item->ifa_netmask) throw std::runtime_error(std::string("getifaddrs: host address without a netmask on ") + item->ifa_name);
             Entry entry{CheckedName(item->ifa_name), InterfaceFlags(item->ifa_flags), GuestAddress(item->ifa_addr), GuestAddress(item->ifa_netmask), {}};
