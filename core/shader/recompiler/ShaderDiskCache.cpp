@@ -46,7 +46,9 @@ namespace ShaderRecompiler {
 std::filesystem::path ShaderCacheDirectory() {
     const char* disabled = std::getenv("ANYPS5_NO_SHADER_CACHE");
     if (disabled != nullptr && *disabled != '\0' && std::strcmp(disabled, "0") != 0) return {};
-#ifdef _WIN32
+#if defined(__EMSCRIPTEN__)
+    return {};
+#elif defined(_WIN32)
     const wchar_t* directory = _wgetenv(L"ANYPS5_SHADER_CACHE_DIR");
     if (directory != nullptr && *directory != L'\0') return std::filesystem::path(directory);
     std::wstring executable(MAX_PATH, L'\0');
@@ -83,9 +85,9 @@ std::filesystem::path ShaderCacheDirectory() {
 namespace ShaderRecompiler::ShaderDiskCache {
 
 #if defined(__linux__) && defined(__x86_64__) && defined(__GLIBCXX__)
-static_assert(sizeof(CompiledShaderArtifact) == 232, "CompiledShaderArtifact changed: update the artifact encoder");
+static_assert(sizeof(CompiledShaderArtifact) == 264, "CompiledShaderArtifact changed: update the artifact encoder");
 static_assert(sizeof(ShaderInvocation) == 200, "ShaderInvocation changed: update the invocation encoder");
-static_assert(sizeof(RecompileResult) == 440, "RecompileResult changed: update EncodeResult and DecodeResult");
+static_assert(sizeof(RecompileResult) == 472, "RecompileResult changed: update EncodeResult and DecodeResult");
 static_assert(sizeof(DescriptorBinding) == 592, "DescriptorBinding changed: update the binding encoder");
 static_assert(sizeof(VertexAttribute) == 32, "VertexAttribute changed: update the attribute encoder");
 static_assert(sizeof(VertexInput) == 16, "VertexInput changed: update the vertex input encoder");
@@ -460,6 +462,7 @@ void decodeBinding(Reader& reader, DescriptorBinding& binding) {
 void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
     writer.Value(result.runtimeAbiVersion);
     writer.Values(std::span<const std::uint32_t>(result.spirv.Words()));
+    writer.Text(result.wgsl);
     writer.Value(result.bdaAbiVersion);
     writer.Value(result.memoryOffsetDword);
     writer.Value(result.shaderDataDwords);
@@ -502,6 +505,7 @@ void encodeArtifact(Writer& writer, const CompiledShaderArtifact& result) {
 void decodeArtifact(Reader& reader, CompiledShaderArtifact& result) {
     reader.Value(result.runtimeAbiVersion);
     result.spirv = reader.Spirv();
+    reader.Text(result.wgsl);
     reader.Value(result.bdaAbiVersion);
     reader.Value(result.memoryOffsetDword);
     reader.Value(result.shaderDataDwords);

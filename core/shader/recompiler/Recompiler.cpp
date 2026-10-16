@@ -42,6 +42,7 @@
 #include "Optimization/include/Optimization/SsaBuilder.hpp"
 #include "Optimization/include/Optimization/TessellationLowering.hpp"
 #include "SpirvBackend/include/SpirvBackend/SpirvEmitter.hpp"
+#include "WgslBackend/WgslEmitter.hpp"
 #if ANYPS5_ENABLE_SPIRV_TOOLS
 #include "SpirvBackend/SpirvOptimizer.hpp"
 #endif
@@ -518,7 +519,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     constexpr SpirvEmitter spirvEmitter;
     CompiledShaderArtifact result;
     result.variantId = nextVariantId();
-    result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
+    if (!request.target.wgsl) result.spirv = spirvEmitter.Emit(program, inputInfo, bindings, targetOptions);
     if (registration && result.spirv.size() > request.target.registrationWordLimit) {
         registration = false;
         program.Metadata().bindingLayoutComplete = false;
@@ -566,6 +567,7 @@ CompiledVariant emitVariant(const RecompileRequest& request, IrProgram& program)
     }
 
     const bool embedded = !result.vertexInputs.empty() && inputInfo.vertex != nullptr && inputInfo.vertex->fetchEmbedded;
+    if (request.target.wgsl) return {request.layout, {}, std::move(static_cast<CompiledBindingLayout&>(bindings)), std::move(result)};
     if (embedded) PrepareVertexInputSpecialization(result);
 #if ANYPS5_ENABLE_SPIRV_TOOLS
     result.spirv = ValidateAndOptimizeSpirv(result.spirv, request.target.vulkanVersion, request.target.spirvVersion, request.target.nonConstantImageOffsets, !embedded);
@@ -586,6 +588,11 @@ CompiledVariant compileVariant(const RecompileRequest& request, IrProgram progra
     return recordEmissionFailure(emissionFailure, [&] {
         prepareInterface(request, program);
         auto variant = emitVariant(request, program);
+        if (request.target.wgsl) {
+            variant.info = program.CompiledInfo();
+            variant.wgsl = std::make_shared<const WgslSource>(std::move(program));
+            return variant;
+        }
         variant.info = std::move(program).TakeCompiledInfo();
         return variant;
     });
@@ -844,6 +851,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
     };
     const auto plan = preparedBindingPlan(variant, snapshot, request.context.pixel ? std::span<const std::uint8_t>(request.context.pixel->targetExportMapping) : std::span<const std::uint8_t>{}, request.target.registrationModules);
     const DescriptorBindingPlan* bindingPlan = &plan->bindings;
+    DescriptorBindingPlan wgslPlan;
     std::shared_ptr<PreparedModuleEntry> entry;
     struct LocalModuleKeyStorage {};
     auto& moduleKey = HostThreadLocal<std::vector<std::uint32_t>, LocalModuleKeyStorage>();
@@ -855,6 +863,8 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         if (variant.info.info.rasterPrimitive) moduleKey.push_back(static_cast<std::uint32_t>(request.context.pixel->rasterPrimitive));
         if (variant.info.info.layerExported) moduleKey.push_back(request.context.pixel->layerExported ? 1u : 0u);
     }
+    const bool wgsl = variant.wgsl != nullptr;
+    const bool vertexSelectors = !artifact.vertexInputPatches.empty() || (wgsl && request.context.vertex && request.context.vertex->fetchEmbedded);
     result.vertexAttributes.reserve(result.vertexInputs.size());
     std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources> vertexClasses{};
     std::array<std::uint32_t, ShaderVertexStageInfo::MaxResources / RuntimeAbi::VertexSelectorsPerDword> runtimeSelectors{};
@@ -864,7 +874,7 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
         const auto& resource = vertex.resources[input.location];
         const auto fetchIndex = vertex.fetchEmbedded ? vertex.resourcesDst[input.location].fetchIndex : input.fetchIndex;
         result.vertexAttributes.push_back({input.location, input.components, resource, fetchIndex});
-        if (!artifact.vertexInputPatches.empty()) {
+        if (vertexSelectors) {
             const auto format = static_cast<IrBufferFormat>((resource.fields[3] >> 12u) & 0x7fu);
             const auto numeric = registrationDefaults && format == IrBufferFormat::Invalid ? IrTextureNumericClass::Float : VertexInputNumericClass(format);
             if (numeric == IrTextureNumericClass::Unsupported) throw std::runtime_error("unsupported prepared vertex format");
@@ -883,7 +893,33 @@ RecompileResult materializeResult(const CompiledVariant& variant, const Recompil
             if (artifact.registrationModule) runtimeSelectors.at(input.location / RuntimeAbi::VertexSelectorsPerDword) |= (selectors & 0xfffu) << (input.location % RuntimeAbi::VertexSelectorsPerDword * 16u);
         }
     }
-    if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel) {
+    if (wgsl) {
+        auto constants = plan->bindings.specialization;
+        std::size_t index = 0;
+        if (variant.bindings.layout.UsesPushData()) constants.push_back({PipelineSpecialization::PushDataOffset, moduleKey[index++]});
+        if (request.context.pixel) {
+            for (std::uint32_t target = 0; target < request.context.pixel->targetExportPacking.size(); ++target) constants.push_back({PipelineSpecialization::ExportPackingBase + target, moduleKey[index++]});
+            constants.push_back({PipelineSpecialization::DualSourceBlend, moduleKey[index++]});
+            if (variant.info.info.rasterPrimitive) constants.push_back({PipelineSpecialization::RasterPrimitive, moduleKey[index++]});
+            if (variant.info.info.layerExported) constants.push_back({PipelineSpecialization::LayerExported, moduleKey[index++]});
+        }
+        for (const auto& input : result.vertexInputs) {
+            if (!vertexSelectors) break;
+            const auto selectors = moduleKey[index++];
+            const auto first = PipelineSpecialization::VertexBase + input.location * PipelineSpecialization::VertexWords;
+            for (std::uint32_t component = 0; component < 4u; ++component) constants.push_back({first + component, (selectors >> (component * 3u)) & 7u});
+            const auto kind = selectors >> 12u;
+            constants.push_back({first + 4u, kind == 0u ? 0x3f800000u : 1u});
+            constants.push_back({first + 5u, kind});
+        }
+        std::vector<WgslPlanBinding> planBindings;
+        planBindings.reserve(plan->bindings.bindings.size());
+        for (const auto& binding : plan->bindings.bindings) planBindings.push_back({binding.descriptor.binding, binding.descriptor.count});
+        const auto module = variant.wgsl->Module(RequestInputInfo(request), constants, planBindings);
+        result.wgsl = module->source;
+        wgslPlan = DescriptorBindingBuilder{}.Select(plan->bindings, module->bindings);
+        bindingPlan = &wgslPlan;
+    } else if (!plan->bindings.specialization.empty() || variant.bindings.layout.UsesPushData() || !artifact.vertexInputPatches.empty() || request.context.pixel) {
         {
             std::shared_lock lock(plan->mutex);
             if (const auto found = plan->modules.find(moduleKey); found != plan->modules.end()) entry = found->second;
@@ -1004,7 +1040,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         if (failure.codeAddress == request.shader.codeAddress && sameLayout(failure.layout, request.layout)) std::rethrow_exception(failure.failure);
     }
     cacheHit = false;
-    const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive();
+    const bool disk = ShaderDiskCache::Enabled() && !DebugProbeActive() && !request.target.wgsl;
     std::vector<std::byte> diskKey;
     std::shared_ptr<const CompiledVariant> variant;
     if (disk) {
@@ -1020,7 +1056,7 @@ std::shared_ptr<const CompiledVariant> findOrCompileVariant(SourceEntry& source,
         static const bool layoutPair = std::getenv("APS5_NO_PERF_LAYOUT_PAIR") == nullptr;
         std::exception_ptr emissionFailure;
         try {
-            if (layoutPair && preparation != nullptr) {
+            if (layoutPair && preparation != nullptr && !request.target.wgsl) {
                 variant = std::make_shared<const CompiledVariant>(PreparedInterface::Compile(source, request, *preparation, &emissionFailure));
             } else {
                 auto program = source.program != nullptr ? std::move(*source.program) : PrepareResourceProgram(request, preparation);
