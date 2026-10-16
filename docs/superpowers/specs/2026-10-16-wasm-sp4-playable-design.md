@@ -220,5 +220,6 @@ void Commit();                                    // 세이브 디렉터리를 �
 
 - 끝단 확인 (2026-10-16, 헤드리스 Chromium + Intel UHD, 자동 재생 허용, 새 프로필): New game → `M0T0` → 걷기·점프. skip·WebGPU 오류·페이지 오류 없음, 세이브 커밋(`anyps5 storage: saved`), 오디오 `running` 1·언더런 0.
 - 테스트: `ctest --test-dir build-wasm-linux -R wasm_` (C++ 플랫폼 테스트 13개, JS `node:test` 36개). `-DANYPS5_NODE=<Node 26>`으로 구성한다.
-- 데스크톱 Chrome 확인 (사용자): `python3 core/wasm-runtime/web/serve.py --runtime build-wasm-linux/core/wasm-runtime --game build-wasm-aot/dreaming-sarah/web --port 8080`을 띄우고 `http://127.0.0.1:8080/`을 연다. 화면을 한 번 클릭하면 소리가 난다. 메뉴가 다 나타난 뒤(약 20초) Enter·방향키·WASD 또는 게임패드로 New game을 고르고 첫 장면을 걷는다. 세이브 지점에서 저장한 뒤 새로고침하고 Continue를 고른다.
+- 데스크톱 Chrome 확인 (사용자): `python3 -m venv .venv`, `source .venv/bin/activate` 뒤 `python core/wasm-runtime/web/serve.py --runtime build-wasm-linux/core/wasm-runtime --game build-wasm-aot/dreaming-sarah/web --port 8080`을 띄우고 `http://127.0.0.1:8080/`을 연다. 화면을 한 번 클릭하면 소리가 난다. 메뉴가 다 나타난 뒤(약 20초) Enter·방향키·WASD 또는 게임패드로 New game을 고르고 첫 장면을 걷는다. 세이브 지점에서 저장한 뒤 새로고침하고 Continue를 고른다.
+- 데스크톱 확인 결과 (2026-10-16): macOS Chrome에서 SSH 터널(`ssh -N -L 8081:127.0.0.1:8081 ...`)로 `--port 8081` 서버에 접속해 타이틀 메뉴(New game / Continue / Options)가 나오는 것을 사용자가 확인했다. 진행 저장 뒤 Continue는 아직 확인 전이다.
 - 남은 일 (다음 단계): 필요할 때 읽는 파일 시스템, 렌더링 성능(draw 묶기, 버퍼 재사용), 첫 장면 밖에서 필요한 GPU 기능(루프 등 다른 제어 흐름, Phi 포함).

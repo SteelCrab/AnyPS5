@@ -26,7 +26,7 @@
 
 ## Shared Commands
 
-모든 Task는 저장소 루트(`/home/pista/AnyPS5`)에서 아래 환경으로 실행한다.
+모든 Task는 저장소 루트에서 아래 환경으로 실행한다.
 
 ```bash
 source ~/emsdk/emsdk_env.sh
