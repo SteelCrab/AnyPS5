@@ -1,0 +1,30 @@
+name: WASM AOT
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/wasm-aot.yml
+      - core/wasm-aot/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/wasm-aot.yml
+      - core/wasm-aot/**
+
+permissions:
+  contents: read
+
+jobs:
+  rust-translator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install native fixture and oracle build dependencies
+        run: sudo apt-get update && sudo apt-get install -y clang libclang-dev cmake pkg-config
+      - name: Build and test the translator against native and Unicorn oracles
+        run: |
+          rustup toolchain install 1.98.0 --profile minimal
+          cargo +1.98.0 test --release --locked --manifest-path core/wasm-aot/Cargo.toml -- --nocapture
