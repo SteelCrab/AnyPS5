@@ -51,9 +51,10 @@ jobs:
           "$RUNNER_TEMP/emsdk/emsdk" activate 6.0.12
           source "$RUNNER_TEMP/emsdk/emsdk_env.sh"
           emcmake cmake -S . -B build-runtime -DANYPS5_BUILD_WASM_RUNTIME=ON -DCMAKE_BUILD_TYPE=Release -DANYPS5_NODE="$ANYPS5_TEST_NODE"
-          cmake --build build-runtime --target anyps5-runtime-web anyps5-runtime-test anyps5-platform-tests anyps5-math-tests --parallel 2
+          cmake --build build-runtime --target anyps5-runtime-web anyps5-runtime-node anyps5-runtime-test anyps5-platform-tests anyps5-math-tests --parallel 2
           ctest --test-dir build-runtime --output-on-failure
           python3 -m unittest discover -s tools/tests -p test_wasm_nid_thunks.py
           export ANYPS5_WASM_RUNTIME_TEST="$PWD/build-runtime/core/wasm-runtime/anyps5-runtime-test.js"
+          export ANYPS5_WASM_RUNTIME_NODE="$PWD/build-runtime/core/wasm-runtime/anyps5-runtime-node.js"
           export PATH="$(dirname "$ANYPS5_TEST_NODE"):$PATH"
           cargo test --release --locked --manifest-path core/wasm-aot/Cargo.toml --test runtime -- --ignored --nocapture

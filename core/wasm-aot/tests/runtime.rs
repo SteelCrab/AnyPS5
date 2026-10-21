@@ -11,17 +11,24 @@ fn runtime() -> Option<PathBuf> {
 }
 
 fn program_wasm() -> PathBuf {
-    let bytes = guest::build("program", &[("program.cpp", &[]), ("tls_initial_exec.cpp", &["-ftls-model=initial-exec"]), ("jump.S", &[])]);
-    let images = load_images("program.so", &bytes, &mut |_| Ok(None)).unwrap();
+    translated_program("program", &[("program.cpp", &[]), ("tls_initial_exec.cpp", &["-ftls-model=initial-exec"]), ("jump.S", &[])])
+}
+
+fn translated_program(name: &str, sources: &[(&str, &[&str])]) -> PathBuf {
+    let bytes = guest::build(name, sources);
+    let images = load_images(&format!("{name}.so"), &bytes, &mut |_| Ok(None)).unwrap();
     let output = translate(Program::bind(images).unwrap(), &TranslateOptions::default()).unwrap();
-    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("runtime-program-{}.wasm", std::process::id()));
+    let path = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!("runtime-{name}-{}.wasm", std::process::id()));
     std::fs::write(&path, &output.wasm).unwrap();
     path
 }
 
 fn run(calls: &[&[&str]]) -> Vec<String> {
     let runtime = runtime().expect("ANYPS5_WASM_RUNTIME_TEST names the runtime test build");
-    let wasm = program_wasm();
+    run_program(runtime, program_wasm(), calls)
+}
+
+fn run_program(runtime: PathBuf, wasm: PathBuf, calls: &[&[&str]]) -> Vec<String> {
     let mut command = Command::new("node");
     command.arg(&runtime).arg(&wasm);
     for call in calls {
@@ -78,4 +85,28 @@ fn guest_programs_run_on_the_wasm_runtime() {
         "run_guest_longjmp = 332".to_string(),
     ];
     assert_eq!(lines, expected);
+}
+
+#[test]
+#[ignore = "requires ANYPS5_WASM_RUNTIME_NODE"]
+fn guest_programs_run_on_the_production_runtime() {
+    let runtime = std::env::var_os("ANYPS5_WASM_RUNTIME_NODE").map(PathBuf::from).expect("ANYPS5_WASM_RUNTIME_NODE names the production runtime");
+    let lines = run_program(
+        runtime,
+        translated_program("runtime_library", &[("runtime_library.cpp", &[])]),
+        &[&["run_initialized"], &["run_imports", "4"], &["run_callback"], &["run_tls"], &["run_tls"], &["run_data"], &["run_print"]],
+    );
+    assert_eq!(
+        lines,
+        [
+            "run_initialized = 1000",
+            "run_imports = 11",
+            "run_callback = -3621",
+            "run_tls = 6",
+            "run_tls = 7",
+            "run_data = 1",
+            "WASM_RUNTIME_SMOKE_PASS",
+            "run_print = 0",
+        ]
+    );
 }
