@@ -34,11 +34,9 @@ fn sign(value: u64) -> i32 {
 }
 
 #[test]
+#[ignore = "requires ANYPS5_DREAMING_SARAH_DIR"]
 fn guest_string_functions_order_like_the_c_library() {
-    let Some(mut machine) = machine() else {
-        eprintln!("ANYPS5_DREAMING_SARAH_DIR is not set; skipped");
-        return;
-    };
+    let mut machine = machine().expect("ANYPS5_DREAMING_SARAH_DIR is required");
     let words: [&[u8]; 8] = [b"inverse", b"waterbg", b"water", b"outline", b"warp", b"vignette", b"noise", b"blurhorizontal"];
     let mut failures = Vec::new();
     for (index, left) in words.iter().enumerate() {

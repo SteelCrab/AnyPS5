@@ -238,11 +238,9 @@ fn states(instruction: &Instruction, assignments: &[(Register, u64)]) -> Vec<Sta
 }
 
 #[test]
+#[ignore = "requires ANYPS5_DREAMING_SARAH_DIR"]
 fn every_instruction_form_of_the_game_matches_the_cpu() {
-    let Some(directory) = game_directory() else {
-        eprintln!("ANYPS5_DREAMING_SARAH_DIR is not set; skipped");
-        return;
-    };
+    let directory = game_directory().expect("ANYPS5_DREAMING_SARAH_DIR is required");
     let forms = instruction_forms(&directory);
     let mut failures = Vec::new();
     let mut tested = 0;

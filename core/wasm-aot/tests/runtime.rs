@@ -49,11 +49,8 @@ fn classify(value: i64) -> i64 {
 }
 
 #[test]
+#[ignore = "requires ANYPS5_WASM_RUNTIME_TEST"]
 fn guest_programs_run_on_the_wasm_runtime() {
-    if runtime().is_none() {
-        eprintln!("skipped: set ANYPS5_WASM_RUNTIME_TEST to the anyps5-runtime-test.js build");
-        return;
-    }
     let switch = (-1..9).fold(0i64, |sum, value| sum * 3 + classify(value));
     let lines = run(&[
         &["run_initialized"],

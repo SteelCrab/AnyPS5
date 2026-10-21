@@ -3,11 +3,9 @@ use std::path::PathBuf;
 use anyps5_wasm_aot::{Error, TranslateOptions, load_images, program::Program, translate};
 
 #[test]
+#[ignore = "requires ANYPS5_DREAMING_SARAH_DIR"]
 fn dreaming_sarah_translates_without_unsupported_instructions() {
-    let Some(directory) = std::env::var_os("ANYPS5_DREAMING_SARAH_DIR").map(PathBuf::from) else {
-        eprintln!("ANYPS5_DREAMING_SARAH_DIR is not set; skipped");
-        return;
-    };
+    let directory = std::env::var_os("ANYPS5_DREAMING_SARAH_DIR").map(PathBuf::from).expect("ANYPS5_DREAMING_SARAH_DIR is required");
     let main = std::fs::read(directory.join("app.elf")).unwrap();
     let mut resolve = |needed: &str| -> anyps5_wasm_aot::Result<Option<(String, Vec<u8>)>> {
         let path = directory.join(needed.trim_start_matches("$ORIGIN/"));
