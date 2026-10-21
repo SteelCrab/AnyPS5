@@ -54,6 +54,8 @@
 
 ### Functional
 
+- [Host stdout preservation](../../../core/libs/prx/libc/src/General.cpp) (WebAssembly) - redirecting stdout with `dup2` throws because Emscripten's stdout pointer cannot be rebound to a retained host stream
+- [Guest long double conversions](../../../core/libs/prx/libc/include/GuestLongDouble.hpp) (WebAssembly) - storing a binary128 value discards fraction bits beyond x87 precision instead of rounding them; noncanonical x87 encodings are unverified
 - [_FSinh and _FCosh](../../../core/libs/prx/libc/src/Math.cpp) (libc) finite results are not verified bit for bit against the console: the scaled product uses the host's binary64 hyperbolic function before rounding to binary32, rather than the float rational and `_FExp` sequence in PRAGMATA's bundled `libc.prx`. NaN preference and payloads, signed zeros, infinite operands and the range-error thresholds follow that binary's instructions; the system `libSceLibcInternal` implementation and nondefault flush-to-zero modes are unverified.
 
 - [sscanf_s and vsscanf_s](../../../core/libs/prx/libc/src/Formatting.cpp) (libc) return `EOF` when a reached conversion has a null destination, stopping before further assignments, following C11 K.3.5.3.7 and K.3.5.3.14. Earlier assignments are retained. The constraint handler is not invoked, and console behaviour is unverified.
