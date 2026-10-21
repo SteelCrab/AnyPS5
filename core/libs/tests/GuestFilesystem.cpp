@@ -1022,6 +1022,8 @@ int main() {
         Require(lstat_nid_postfix(absoluteLink.string().c_str(), &absoluteStatus) == 0);
         Require((absoluteStatus.st_mode & 0170000) == 0120000 && absoluteStatus.st_size > 0 && absoluteStatus.st_nlink == 1);
         Require(stat_nid_postfix(absoluteLink.string().c_str(), &followed) == 0 && followed.st_ino == status.st_ino);
+        Require(sceKernelOpen((statLoop.generic_string() + "/inside").c_str(), 0, 0) == static_cast<int>(0x8002003eu));
+        Require(open_nid_postfix((statLoop.string() + "\\inside").c_str(), 0, 0) == -1 && *__error_nid_postfix() == 62);
         Require(std::filesystem::remove(fileLink) && std::filesystem::remove(directoryLink) && DeleteFileW(danglingLink.c_str()) != 0 &&
             DeleteFileW(statLoop.c_str()) != 0 &&
             std::filesystem::remove(absoluteLink) && std::filesystem::remove(targetDirectory));

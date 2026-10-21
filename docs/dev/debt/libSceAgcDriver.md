@@ -9,6 +9,8 @@
 
 - [sceAgcDriverSubmitCommandBuffer, sceAgcDriverSubmitMultiCommandBuffers](../../../core/libs/prx/libSceAgcDriver/Submit/src/CommandBuffer.cpp) (libSceAgcDriver) - `queue_context` is treated as a pointer to context whose queue identifier is stored 4 bytes in, matching KytyPS5 (`src/libs/agc.cpp` `AgcDriverSubmitCommandBuffer` / `get_driver_queue`). A null context returns `EINVAL` (22). Whether the console validates other context fields before queue dispatch is unverified
 
+- [sceAgcDriverAcquireHDRScopesACQ, sceAgcDriverGetCoredumpAddress, sceAgcDriverHp3dLockEnd, sceAgcDriverHp3dLockStart, sceAgcDriverIsEsvmProcess, sceAgcDriverNopDataWritePacket, sceAgcDriverReleaseHDRScopesACQ, sceAgcDriverSetTargetRingForDiag, sceAgcDriverSetValueToSharedGds, sceAgcDriverSetWorkloadStreamInactive, sceAgcDriverSubmitReprojectionAcb, sceAgcDriverSuspendPointSubmitCdbg, sceAgcDriverSysGetGfxAppGpuResetStatus](../../../core/libs/prx/libSceAgcDriver/Unimplemented.cpp) (libSceAgcDriver) - signatures and behavior are unverified; these parameterless declarations only resolve imports and throw through `NotImplemented_nid_no_patch`.
+
 - [Initial point context](../../../core/libs/prx/libSceAgcDriver/Execution/include/QueueState.hpp) - new queues and CLEAR_STATE seed PA_SU_POINT_SIZE 0x00080008 and PA_SU_POINT_MINMAX 0xffff0000, matching every public context table in libSceAgc/Command/include/RegisterDefaultsData.hpp. Cocoon (PPSA08766) reaches geometry point output without writing these registers in the observed startup. Applying the SDK context defaults to initial/CLEAR_STATE driver context is inferred; GPU power-on reset state is not measured and is not the source of these values. Explicit writes and pushed/restored contexts retain their own values.
 
 

@@ -742,42 +742,34 @@ int APS5_VABI sceNetCtlGetConnectionElapsedTimeIpcInt(void) {
 }
 
 int APS5_VABI sceNetCtlApRpCheckCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpClearEvent(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpRegisterCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpUnregisterCallback(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpGetResult(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpGetState(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpGetInfo(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpStart(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
@@ -797,17 +789,14 @@ int APS5_VABI sceNetCtlApAppStartWithRetry(void) {
 }
 
 int APS5_VABI sceNetCtlApRpStartWithRetry(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpStartConf(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceNetCtlApRpStop(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 

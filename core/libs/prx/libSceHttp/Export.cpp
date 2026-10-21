@@ -628,12 +628,10 @@ int APS5_VABI sceHttpAuthCacheExport(void) {
 }
 
 int APS5_VABI sceHttpDbgEnableProfile(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
 int APS5_VABI sceHttpDbgSetPrintf(void) {
-    NotImplemented_nid_no_patch(__func__);
     return 0;
 }
 
