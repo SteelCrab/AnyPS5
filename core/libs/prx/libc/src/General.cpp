@@ -512,6 +512,9 @@ std::atomic<int> g_hostStandardOutput{-1};
 }
 
 extern "C" int KeepHostStandardOutput_nid_no_patch() {
+#ifdef __EMSCRIPTEN__
+    NotImplemented_nid_no_patch(__func__);
+#else
     const std::lock_guard lock(g_hostStandardOutputMutex);
     if (const int kept = g_hostStandardOutput.load(); kept >= 0) return kept;
     const int kept = ::fcntl(1, F_DUPFD_CLOEXEC, 3);
@@ -530,6 +533,7 @@ extern "C" int KeepHostStandardOutput_nid_no_patch() {
     stdout = stream;
     g_hostStandardOutput.store(kept);
     return kept;
+#endif
 }
 
 extern "C" int DuplicateHostDescriptor_nid_no_patch(int descriptor) {
