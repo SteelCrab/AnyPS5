@@ -430,10 +430,10 @@ fn arithmetic(e: &mut Emitter<'_>, instruction: &Instruction, mnemonic: Mnemonic
 fn environment(e: &mut Emitter<'_>, instruction: &Instruction, store: bool) -> Result<()> {
     let address = e.address(instruction)?;
     if store {
-        e.w().local_get(address).local_get(CTX).i32_load16_u(mem(cpu::X87_FCW)).i32_store(mem(0));
+        e.w().local_get(address).local_get(CTX).i32_load16_u(mem(cpu::X87_FCW)).i32_const(0xffff0000u32 as i32).i32_or().i32_store(mem(0));
         e.status_word();
         let status = e.temp32();
-        e.w().local_set(status).local_get(address).local_get(status).i32_store(mem(4));
+        e.w().local_set(status).local_get(address).local_get(status).i32_const(0xffff0000u32 as i32).i32_or().i32_store(mem(4));
         let tags = e.temp32();
         let value = e.f64_temp();
         e.w().i32_const(0).local_set(tags);
@@ -446,7 +446,7 @@ fn environment(e: &mut Emitter<'_>, instruction: &Instruction, store: bool) -> R
             e.w().local_get(CTX).i32_load16_u(mem(cpu::X87_TAGS)).i32_const(1 << register).i32_and().i32_eqz().select();
             e.w().i32_const(2 * register as i32).i32_shl().local_get(tags).i32_or().local_set(tags);
         }
-        e.w().local_get(address).local_get(tags).i32_store(mem(8));
+        e.w().local_get(address).local_get(tags).i32_const(0xffff0000u32 as i32).i32_or().i32_store(mem(8));
         for offset in [12u64, 16, 20, 24] {
             e.w().local_get(address).i32_const(0).i32_store(mem(offset));
         }

@@ -1,8 +1,14 @@
     .intel_syntax noprefix
     .text
+#ifdef __APPLE__
     .globl _oracle_page
     .p2align 12
 _oracle_page:
+#else
+    .globl oracle_page
+    .p2align 12
+oracle_page:
+#endif
 
 exit:
     mov [rip + gprs + 0x00], rax

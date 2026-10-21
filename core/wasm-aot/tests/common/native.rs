@@ -9,8 +9,14 @@ fn oracle() -> &'static Path {
     BINARY.get_or_init(|| {
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/oracle");
         let binary = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!("x86-oracle-{}", std::process::id()));
-        let status = Command::new("clang")
-            .args(["-arch", "x86_64", "-O1", "-o"])
+        let mut compiler = Command::new("clang");
+        if cfg!(target_os = "macos") {
+            compiler.args(["-arch", "x86_64"]);
+        } else {
+            compiler.arg("-m64");
+        }
+        let status = compiler
+            .args(["-O1", "-o"])
             .arg(&binary)
             .arg(source.join("native.c"))
             .arg(source.join("stub.S"))
