@@ -291,6 +291,7 @@ private:
         append(key, value.float32FlushToZero);
         append(key, value.waveLdsMemoryBarriers);
         append(key, value.float32DenormPreserve);
+        if (value.wgsl) append(key, std::uint64_t{1});
     }
 };
 
