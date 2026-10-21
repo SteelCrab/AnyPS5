@@ -317,16 +317,11 @@ int APS5_VABI sceSystemServiceParamGetInt(int paramId, int* value) {
 }
 
 int APS5_VABI sceSystemServiceParamGetString(int paramId, char* buf, size_t bufSize) {
- if (buf == nullptr || bufSize == 0) {
+ if (paramId != SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME || buf == nullptr || bufSize < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) {
   return SYSTEM_SERVICE_ERROR_PARAMETER;
  }
- if (paramId != SYSTEM_SERVICE_PARAM_ID_SYSTEM_NAME) {
-  NotImplemented_nid_no_patch("sceSystemServiceParamGetString: parameter other than the system name");
- }
- if (bufSize < SYSTEM_SERVICE_MAX_SYSTEM_NAME_LENGTH) {
-  NotImplemented_nid_no_patch("sceSystemServiceParamGetString: buffer shorter than 65 bytes");
- }
  constexpr char SystemName[] = "PS5";
+ std::memset(buf, 0, bufSize);
  std::memcpy(buf, SystemName, sizeof(SystemName));
  return SYSTEM_SERVICE_OK;
 }
@@ -394,8 +389,7 @@ int APS5_VABI sceSystemServiceOpenChallengeActivity(void) {
 }
 
 int APS5_VABI sceSystemServiceOpenTournamentOccurrence(void) {
- NotImplemented_nid_no_patch(__func__);
- return 0;
+ return SYSTEM_SERVICE_OK;
 }
 
 int APS5_VABI sceSystemServiceAddLocalProcessForPsmKit(const char*, const char* const*, const void*) {
@@ -426,6 +420,23 @@ int APS5_VABI sceSystemServiceKillApp(int appId, int how, int reason, int coreDu
  }
  if (how != -1 || reason != 0 || coreDump != 0) {
   NotImplemented_nid_no_patch("sceSystemServiceKillApp: arguments other than -1, 0 and 0");
+ }
+ LibcExit_nid_no_patch(0);
+}
+
+int APS5_VABI sceLncUtilKillApp(uint32_t appId) {
+ if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
+  NotImplemented_nid_no_patch("sceLncUtilKillApp: application other than the running title");
+ }
+ LibcExit_nid_no_patch(0);
+}
+
+int APS5_VABI sceLncUtilKillAppWithReason(uint32_t appId, int reason) {
+ if (appId != static_cast<uint32_t>(SYSTEM_SERVICE_RUNNING_APP_ID)) {
+  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: application other than the running title");
+ }
+ if (reason != 0) {
+  NotImplemented_nid_no_patch("sceLncUtilKillAppWithReason: a reason other than 0");
  }
  LibcExit_nid_no_patch(0);
 }

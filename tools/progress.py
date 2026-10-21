@@ -487,7 +487,10 @@ def main(argv=None):
         if args.root:
             PRX = args.root / "core" / "libs" / "prx"
             OPCODES = args.root / previous[1].relative_to(ROOT)
-        libraries, shaders = collect_libraries(), collect_shaders()
+        try:
+            libraries, shaders = collect_libraries(), collect_shaders()
+        except FileNotFoundError as error:
+            parser.error(f"{args.root or ROOT} is not a source tree: {error.filename} not found")
         try:
             libraries = select_libraries(libraries, args.module or [])
         except ValueError as error:

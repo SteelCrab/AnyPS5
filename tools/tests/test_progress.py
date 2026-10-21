@@ -401,5 +401,20 @@ class ProgressTests(unittest.TestCase):
                     self.assertEqual(raised.exception.code, 2)
                     self.assertIn(str(path), stderr.getvalue())
 
+    def test_root_must_be_a_source_tree(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty = Path(directory) / "empty tree"
+            empty.mkdir()
+            half = Path(directory) / "half tree"
+            (half / "core" / "libs" / "prx").mkdir(parents=True)
+            for name, path in (("missing", Path(directory) / "missing tree"), ("empty", empty), ("no opcodes", half)):
+                with self.subTest(name):
+                    stderr = io.StringIO()
+                    with patch("sys.stderr", stderr), self.assertRaises(SystemExit) as raised:
+                        progress.main(["--json", "--root", str(path)])
+                    self.assertEqual(raised.exception.code, 2)
+                    self.assertIn("is not a source tree", stderr.getvalue())
+                    self.assertIn(str(path), stderr.getvalue())
+
 if __name__ == "__main__":
     unittest.main()

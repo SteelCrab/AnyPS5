@@ -291,6 +291,7 @@ struct SpirvTarget {
     bool robustBufferAccess2 = false;
     bool depthRangeRemap = false;
     bool float32FlushToZero = false;
+    bool waveLdsMemoryBarriers = false;
     bool float32DenormPreserve = false;
     bool wgsl = false;
 };
